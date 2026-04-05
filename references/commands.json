@@ -1,0 +1,199 @@
+[
+  {
+    "section": "Ilya Sutskever",
+    "command": [
+      "twitter",
+      "user-posts",
+      "ilyasut",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "郭明錤",
+    "command": [
+      "twitter",
+      "user-posts",
+      "mingchikuo",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "seekinganythingbutalpha",
+    "command": [
+      "twitter",
+      "user-posts",
+      "ivanalog_com",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "外汇交易员",
+    "command": [
+      "twitter",
+      "user-posts",
+      "fxtrader",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "Time Horizon",
+    "command": [
+      "twitter",
+      "user-posts",
+      "Time_HorizonX",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "数字游民Jarod",
+    "command": [
+      "twitter",
+      "user-posts",
+      "jarodise",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "卡比卡比",
+    "command": [
+      "twitter",
+      "user-posts",
+      "jakevin7",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "Aelia Capitolina",
+    "command": [
+      "twitter",
+      "user-posts",
+      "Areskapitalon",
+      "-n",
+      "10",
+      "--full-text",
+      "--json"
+    ]
+  },
+  {
+    "section": "middle-east",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/world/middle-east/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "china",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/world/china/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "world",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/world/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "business",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/business/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "technology",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/technology/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "bbc_news",
+    "command": [
+      "opencli",
+      "BbcPublic",
+      "news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "techcrunch",
+    "command": [
+      "opencli",
+      "TechcrunchPublic",
+      "news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "arstechnica",
+    "command": [
+      "opencli",
+      "ArsPublic",
+      "news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  }
+]

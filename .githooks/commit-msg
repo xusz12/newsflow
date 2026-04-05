@@ -1,0 +1,23 @@
+#!/bin/sh
+MSG_FILE="$1"
+
+# 取第一行有效提交主题：去掉注释行和空行
+SUBJECT=$(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$MSG_FILE" | head -n 1)
+
+if [ -z "$SUBJECT" ]; then
+  echo "❌ commit message 不能为空。"
+  exit 1
+fi
+
+# 至少包含一个中文字符
+if ! printf '%s\n' "$SUBJECT" | grep -q '[一-龥]'; then
+  echo "❌ commit message 必须使用中文！请用中文描述提交内容。"
+  echo "示例：feat: 添加用户登录功能"
+  exit 1
+fi
+
+# 主题长度下限（按 shell 字符串长度）
+if [ ${#SUBJECT} -lt 5 ]; then
+  echo "❌ commit message 太短，请写得更详细一些（用中文）。"
+  exit 1
+fi
