@@ -120,12 +120,29 @@ def compact_text(raw: Any) -> str:
 
 def normalize_row(section: str, row: dict[str, Any]) -> dict[str, str] | None:
     title = str(row.get("title", "")).strip()
-    url = str(row.get("url", "")).strip()
+    url = str(row.get("url") or row.get("link") or "").strip()
+    raw_time = row.get("time")
+    if raw_time is None or not str(raw_time).strip():
+        for fallback_key in (
+            "publishedAt",
+            "pubDate",
+            "date",
+            "published_at",
+            "createdAt",
+            "created_at",
+        ):
+            candidate = row.get(fallback_key)
+            if candidate is None:
+                continue
+            if not str(candidate).strip():
+                continue
+            raw_time = candidate
+            break
     if title and url:
         return {
             "section": section,
             "title": title,
-            "time": normalize_time(row.get("time")),
+            "time": normalize_time(raw_time),
             "url": url,
         }
 

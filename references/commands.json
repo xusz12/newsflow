@@ -1,5 +1,130 @@
 [
   {
+    "section": "middle-east",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/world/middle-east/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "china",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/world/china/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "world",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/world/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "business",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/business/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "technology",
+    "command": [
+      "opencli",
+      "ReutersBrowser",
+      "news",
+      "https://www.reuters.com/technology/",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "bloomberg_main",
+    "command": [
+      "opencli",
+      "bloomberg",
+      "main",
+      "--limit",
+      "15",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "bbc_news",
+    "command": [
+      "opencli",
+      "bbc",
+      "news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "sina_china_news",
+    "command": [
+      "opencli",
+      "sina",
+      "china-news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "techcrunch",
+    "command": [
+      "opencli",
+      "TechcrunchPublic",
+      "news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
+    "section": "arstechnica",
+    "command": [
+      "opencli",
+      "ArsPublic",
+      "news",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ]
+  },
+  {
     "section": "Ilya Sutskever",
     "command": [
       "twitter",
@@ -93,107 +218,6 @@
       "10",
       "--full-text",
       "--json"
-    ]
-  },
-  {
-    "section": "middle-east",
-    "command": [
-      "opencli",
-      "ReutersBrowser",
-      "news",
-      "https://www.reuters.com/world/middle-east/",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "china",
-    "command": [
-      "opencli",
-      "ReutersBrowser",
-      "news",
-      "https://www.reuters.com/world/china/",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "world",
-    "command": [
-      "opencli",
-      "ReutersBrowser",
-      "news",
-      "https://www.reuters.com/world/",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "business",
-    "command": [
-      "opencli",
-      "ReutersBrowser",
-      "news",
-      "https://www.reuters.com/business/",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "technology",
-    "command": [
-      "opencli",
-      "ReutersBrowser",
-      "news",
-      "https://www.reuters.com/technology/",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "bbc_news",
-    "command": [
-      "opencli",
-      "BbcPublic",
-      "news",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "techcrunch",
-    "command": [
-      "opencli",
-      "TechcrunchPublic",
-      "news",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
-    "section": "arstechnica",
-    "command": [
-      "opencli",
-      "ArsPublic",
-      "news",
-      "--limit",
-      "10",
-      "--format",
-      "json"
     ]
   }
 ]
