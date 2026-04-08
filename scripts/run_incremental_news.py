@@ -10,6 +10,28 @@ from zoneinfo import ZoneInfo
 
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
+TWITTER_SECTIONS = {
+    "Ilya Sutskever",
+    "郭明錤",
+    "seekinganythingbutalpha",
+    "外汇交易员",
+    "Time Horizon",
+    "数字游民Jarod",
+    "卡比卡比",
+    "Aelia Capitolina",
+}
+PORTAL_SECTIONS = {
+    "middle-east",
+    "china",
+    "world",
+    "business",
+    "technology",
+    "bloomberg_main",
+    "bbc_news",
+    "sina_china_news",
+    "techcrunch",
+    "arstechnica",
+}
 
 
 def normalize_time(raw_time: Any) -> str:
@@ -169,6 +191,53 @@ def section_order_from_items(items: list[dict[str, str]]) -> list[str]:
     return merge_section_order([item["section"] for item in items])
 
 
+def sort_sections(section_order: list[str]) -> list[str]:
+    portal_sections: list[str] = []
+    twitter_sections: list[str] = []
+    other_sections: list[str] = []
+    for section in section_order:
+        if section in PORTAL_SECTIONS:
+            portal_sections.append(section)
+            continue
+        if section in TWITTER_SECTIONS:
+            twitter_sections.append(section)
+            continue
+        other_sections.append(section)
+    return portal_sections + twitter_sections + other_sections
+
+
+def parse_sortable_time(text: str) -> datetime | None:
+    value = str(text or "").strip()
+    if not value or value == "页面未显示":
+        return None
+
+    formats = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def sort_section_items(section_items: list[dict[str, str]]) -> list[dict[str, str]]:
+    indexed_items = list(enumerate(section_items))
+
+    def sort_key(pair: tuple[int, dict[str, str]]) -> tuple[int, float, int]:
+        index, item = pair
+        parsed = parse_sortable_time(item.get("time", ""))
+        if parsed is None:
+            return (1, 0.0, index)
+        return (0, -parsed.timestamp(), index)
+
+    return [item for _, item in sorted(indexed_items, key=sort_key)]
+
+
 def load_state(state_path: Path, date_text: str, timezone_name: str) -> dict[str, Any]:
     if not state_path.exists():
         return {
@@ -219,14 +288,15 @@ def build_markdown(
     items: list[dict[str, str]],
     errors: list[dict[str, str]],
 ) -> str:
-    grouped: dict[str, list[dict[str, str]]] = {section: [] for section in section_order}
+    sorted_section_order = sort_sections(section_order)
+    grouped: dict[str, list[dict[str, str]]] = {section: [] for section in sorted_section_order}
 
     for item in items:
         grouped.setdefault(item["section"], []).append(item)
 
     lines: list[str] = []
-    for section in section_order:
-        section_items = grouped.get(section, [])
+    for section in sorted_section_order:
+        section_items = sort_section_items(grouped.get(section, []))
         lines.append(f"## {section}（{len(section_items)}条）")
         lines.append("")
         for item in section_items:
@@ -528,6 +598,26 @@ def finalize_incremental(args: argparse.Namespace) -> int:
     run_fresh_path = out_dir / f"{run_file_timestamp}_freshNews.md"
     daily_fresh_path = out_dir / f"{date_text}_dailyFreshNews.md"
 
+    existing_run = next(
+        (
+            entry
+            for entry in today_state["runs"]
+            if str(entry.get("generated_at", "")).strip() == generated_at
+        ),
+        None,
+    )
+    if run_fresh_path.exists() and not args.allow_overwrite_existing_run:
+        if existing_run is not None:
+            raise FileExistsError(
+                "Refusing to overwrite an existing finalized run at "
+                f"{run_fresh_path} for generated_at {generated_at}. "
+                "Pass --allow-overwrite-existing-run to overwrite intentionally."
+            )
+        raise FileExistsError(
+            f"Refusing to overwrite existing run file: {run_fresh_path}. "
+            "Pass --allow-overwrite-existing-run to overwrite intentionally."
+        )
+
     run_fresh_path.write_text(
         build_markdown(merged_section_order, run_fresh_items_final, current_run_errors),
         encoding="utf-8",
@@ -596,6 +686,11 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("--translated-json", required=True, help="Model-produced translation map JSON")
     finalize.add_argument("--state-dir", required=True, help="Directory for per-day state JSON files")
     finalize.add_argument("--out-dir", required=True, help="Directory for markdown outputs")
+    finalize.add_argument(
+        "--allow-overwrite-existing-run",
+        action="store_true",
+        help="Allow overwriting an existing per-run fresh news markdown file",
+    )
     finalize.set_defaults(handler=finalize_incremental)
 
     return parser
