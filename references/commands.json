@@ -81,12 +81,24 @@
     "command": [
       "opencli",
       "bbc",
+      "frontpage",
+      "--limit",
+      "10",
+      "--format",
+      "json"
+    ],
+    "retry_once": true,
+    "fallback_command": [
+      "opencli",
+      "bbc",
       "news",
       "--limit",
       "10",
       "--format",
       "json"
-    ]
+    ],
+    "treat_empty_as_failure": true,
+    "min_valid_items": 1
   },
   {
     "section": "sina_china_news",

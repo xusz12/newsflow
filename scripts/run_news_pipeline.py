@@ -178,6 +178,106 @@ def normalize_row(section: str, row: dict[str, Any]) -> dict[str, str] | None:
     }
 
 
+def parse_positive_int(raw: Any, default: int) -> int:
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    return default
+
+
+def execute_command_once(
+    *,
+    section: str,
+    command: list[str],
+    timeout_seconds: int,
+    min_valid_items: int,
+    treat_empty_as_failure: bool,
+) -> dict[str, Any]:
+    command_str = " ".join(shlex.quote(part) for part in command)
+
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "command": command,
+            "command_str": command_str,
+            "error": f"timeout after {timeout_seconds}s",
+            "failed_reason": "timeout",
+            "items": [],
+            "raw_count": 0,
+            "valid_count": 0,
+        }
+
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "command": command,
+            "command_str": command_str,
+            "error": summarize_error(proc.stdout, proc.stderr, proc.returncode),
+            "failed_reason": "non_zero_exit",
+            "items": [],
+            "raw_count": 0,
+            "valid_count": 0,
+        }
+
+    try:
+        rows = parse_json_items(proc.stdout)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "command_str": command_str,
+            "error": f"JSON parse error: {exc}",
+            "failed_reason": "json_parse_error",
+            "items": [],
+            "raw_count": 0,
+            "valid_count": 0,
+        }
+
+    items: list[dict[str, str]] = []
+    for row in rows:
+        normalized = normalize_row(section, row)
+        if normalized is None:
+            continue
+        items.append(normalized)
+
+    valid_count = len(items)
+    if treat_empty_as_failure and valid_count < min_valid_items:
+        return {
+            "ok": False,
+            "command": command,
+            "command_str": command_str,
+            "error": (
+                f"normalized valid items below threshold: "
+                f"{valid_count} < {min_valid_items}"
+            ),
+            "failed_reason": "below_min_valid_items",
+            "items": items,
+            "raw_count": len(rows),
+            "valid_count": valid_count,
+        }
+
+    return {
+        "ok": True,
+        "command": command,
+        "command_str": command_str,
+        "error": "",
+        "failed_reason": "",
+        "items": items,
+        "raw_count": len(rows),
+        "valid_count": valid_count,
+    }
+
+
 def load_config(config_path: Path) -> list[dict[str, Any]]:
     if not config_path.exists():
         raise FileNotFoundError(f"config not found: {config_path}")
@@ -196,73 +296,129 @@ def load_config(config_path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"config item #{i} missing section")
 
         command = parse_command(item.get("command"))
-        parsed.append({"section": section, "command": command})
+
+        fallback_raw = item.get("fallback_command")
+        fallback_command = (
+            parse_command(fallback_raw) if fallback_raw is not None else None
+        )
+
+        retry_once = bool(item.get("retry_once", False))
+        treat_empty_as_failure = bool(item.get("treat_empty_as_failure", False))
+        min_valid_items = parse_positive_int(item.get("min_valid_items", 1), default=1)
+
+        parsed.append(
+            {
+                "section": section,
+                "command": command,
+                "fallback_command": fallback_command,
+                "retry_once": retry_once,
+                "treat_empty_as_failure": treat_empty_as_failure,
+                "min_valid_items": min_valid_items,
+            }
+        )
 
     return parsed
 
 
-def run_pipeline(entries: list[dict[str, Any]], timeout_seconds: int) -> dict[str, Any]:
+def run_pipeline(
+    entries: list[dict[str, Any]],
+    timeout_seconds: int,
+) -> dict[str, Any]:
     section_order: list[str] = []
     section_items: dict[str, list[dict[str, str]]] = {}
     errors: list[dict[str, Any]] = []
+    recovered_attempts: list[dict[str, Any]] = []
 
     for entry in entries:
         section = entry["section"]
         command = entry["command"]
+        fallback_command = entry.get("fallback_command")
+        retry_once = bool(entry.get("retry_once", False))
+        treat_empty_as_failure = bool(entry.get("treat_empty_as_failure", False))
+        min_valid_items = parse_positive_int(entry.get("min_valid_items", 1), default=1)
 
         if section not in section_order:
             section_order.append(section)
             section_items[section] = []
 
-        command_str = " ".join(shlex.quote(part) for part in command)
+        primary_attempts: list[dict[str, Any]] = []
+        first = execute_command_once(
+            section=section,
+            command=command,
+            timeout_seconds=timeout_seconds,
+            min_valid_items=min_valid_items,
+            treat_empty_as_failure=treat_empty_as_failure,
+        )
+        primary_attempts.append(first)
 
-        try:
-            proc = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
+        if (not first["ok"]) and retry_once:
+            second = execute_command_once(
+                section=section,
+                command=command,
+                timeout_seconds=timeout_seconds,
+                min_valid_items=min_valid_items,
+                treat_empty_as_failure=treat_empty_as_failure,
             )
-        except subprocess.TimeoutExpired:
-            errors.append(
-                {
-                    "section": section,
-                    "command": command,
-                    "command_str": command_str,
-                    "error": f"timeout after {timeout_seconds}s",
-                }
+            primary_attempts.append(second)
+
+        success_attempt = next((a for a in primary_attempts if a["ok"]), None)
+        used_fallback = False
+        fallback_attempt: dict[str, Any] | None = None
+
+        if success_attempt is None and fallback_command:
+            fallback_attempt = execute_command_once(
+                section=section,
+                command=fallback_command,
+                timeout_seconds=timeout_seconds,
+                min_valid_items=min_valid_items,
+                treat_empty_as_failure=treat_empty_as_failure,
             )
+            if fallback_attempt["ok"]:
+                success_attempt = fallback_attempt
+                used_fallback = True
+
+        if success_attempt is not None:
+            section_items[section].extend(success_attempt["items"])
+            if (len(primary_attempts) > 1) or used_fallback:
+                recovered_attempts.append(
+                    {
+                        "section": section,
+                        "primary_command": command,
+                        "primary_attempts": len(primary_attempts),
+                        "primary_fail_reasons": [
+                            a["failed_reason"] for a in primary_attempts if not a["ok"]
+                        ],
+                        "fallback_command": fallback_command,
+                        "used_fallback": used_fallback,
+                        "used_command": success_attempt["command"],
+                    }
+                )
             continue
 
-        if proc.returncode != 0:
-            errors.append(
-                {
-                    "section": section,
-                    "command": command,
-                    "command_str": command_str,
-                    "error": summarize_error(proc.stdout, proc.stderr, proc.returncode),
-                }
+        final_error = ""
+        final_command = command
+        final_command_str = " ".join(shlex.quote(part) for part in command)
+        if fallback_attempt is not None:
+            final_error = (
+                f"primary failed ({'; '.join(a['failed_reason'] or 'unknown' for a in primary_attempts)}); "
+                f"fallback failed: {fallback_attempt['error']}"
             )
-            continue
+            final_command = fallback_command
+            final_command_str = " ".join(shlex.quote(part) for part in fallback_command)
+        else:
+            last_primary = primary_attempts[-1]
+            final_error = last_primary["error"]
+            final_command = last_primary["command"]
+            final_command_str = last_primary["command_str"]
 
-        try:
-            rows = parse_json_items(proc.stdout)
-        except Exception as exc:
-            errors.append(
-                {
-                    "section": section,
-                    "command": command,
-                    "command_str": command_str,
-                    "error": f"JSON parse error: {exc}",
-                }
-            )
-            continue
-
-        for row in rows:
-            normalized = normalize_row(section, row)
-            if normalized is None:
-                continue
-            section_items[section].append(normalized)
+        errors.append(
+            {
+                "section": section,
+                "command": final_command,
+                "command_str": final_command_str,
+                "error": final_error,
+            }
+        )
 
     seen_urls: set[str] = set()
     deduped_items: list[dict[str, str]] = []
@@ -283,12 +439,14 @@ def run_pipeline(entries: list[dict[str, Any]], timeout_seconds: int) -> dict[st
         "grouped_items": grouped,
         "deduped_items": deduped_items,
         "errors": errors,
+        "recovered_attempts": recovered_attempts,
         "stats": {
             "command_count": len(entries),
             "section_count": len(section_order),
             "collected_before_dedup": sum(len(items) for items in section_items.values()),
             "after_dedup": len(deduped_items),
             "error_count": len(errors),
+            "recovered_count": len(recovered_attempts),
         },
     }
 
@@ -314,7 +472,10 @@ def main() -> int:
 
     try:
         entries = load_config(Path(args.config).expanduser().resolve())
-        result = run_pipeline(entries, timeout_seconds=args.timeout)
+        result = run_pipeline(
+            entries,
+            timeout_seconds=args.timeout,
+        )
     except Exception as exc:
         print(f"Pipeline error: {exc}", file=sys.stderr)
         return 2
