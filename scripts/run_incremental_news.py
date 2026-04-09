@@ -32,6 +32,18 @@ PORTAL_SECTIONS = {
     "techcrunch",
     "arstechnica",
 }
+SECTION_DISPLAY_NAMES = {
+    "middle-east": "Reuters · Middle East",
+    "china": "Reuters · China",
+    "world": "Reuters · World",
+    "business": "Reuters · Business",
+    "technology": "Reuters · Technology",
+    "bloomberg_main": "Bloomberg",
+    "bbc_news": "BBC",
+    "sina_china_news": "Sina · China News",
+    "techcrunch": "TechCrunch",
+    "arstechnica": "Ars Technica",
+}
 
 
 def normalize_time(raw_time: Any) -> str:
@@ -238,6 +250,26 @@ def sort_section_items(section_items: list[dict[str, str]]) -> list[dict[str, st
     return [item for _, item in sorted(indexed_items, key=sort_key)]
 
 
+def get_section_display_name(section: str) -> str:
+    return SECTION_DISPLAY_NAMES.get(section, section)
+
+
+def build_section_summary(section_items: list[dict[str, str]]) -> str:
+    count = len(section_items)
+    parsed_times = [
+        (item["time"], parsed)
+        for item in section_items
+        for parsed in [parse_sortable_time(item.get("time", ""))]
+        if parsed is not None
+    ]
+    if not parsed_times:
+        return f"{count}条｜时间未显示"
+
+    latest_text, _ = max(parsed_times, key=lambda pair: pair[1])
+    earliest_text, _ = min(parsed_times, key=lambda pair: pair[1])
+    return f"{count}条｜最新 {latest_text}｜最早 {earliest_text}｜时间倒序"
+
+
 def load_state(state_path: Path, date_text: str, timezone_name: str) -> dict[str, Any]:
     if not state_path.exists():
         return {
@@ -294,10 +326,18 @@ def build_markdown(
     for item in items:
         grouped.setdefault(item["section"], []).append(item)
 
+    sorted_grouped = {
+        section: sort_section_items(grouped.get(section, [])) for section in sorted_section_order
+    }
+    non_empty_sections = [section for section in sorted_section_order if sorted_grouped[section]]
+    empty_sections = [section for section in sorted_section_order if not sorted_grouped[section]]
+
     lines: list[str] = []
-    for section in sorted_section_order:
-        section_items = sort_section_items(grouped.get(section, []))
-        lines.append(f"## {section}（{len(section_items)}条）")
+    for index, section in enumerate(non_empty_sections):
+        section_items = sorted_grouped[section]
+        lines.append(f"## {get_section_display_name(section)}（{len(section_items)}条）")
+        lines.append("")
+        lines.append(f"> {build_section_summary(section_items)}")
         lines.append("")
         for item in section_items:
             lines.append(f"### [{escape_md_title(item['title'])}]({item['url']})")
@@ -306,6 +346,18 @@ def build_markdown(
                 lines.extend(render_blockquote(quoted_text))
             lines.append(f"- 发布时间：{item['time']}")
             lines.append("")
+        if index < len(non_empty_sections) - 1:
+            lines.append("---")
+            lines.append("")
+
+    lines.append(f"## 本次无更新的分组（{len(empty_sections)}个）")
+    lines.append("")
+    if empty_sections:
+        for section in empty_sections:
+            lines.append(f"- {get_section_display_name(section)}")
+    else:
+        lines.append("- 无")
+    lines.append("")
 
     lines.append("## errors")
     lines.append("")

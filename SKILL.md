@@ -112,13 +112,36 @@ Rules:
 
 ## Output Contract
 
-For each output Markdown file, always emit a section header even when no stories remain after filtering:
+For each output Markdown file:
+
+- Emit full `## section（N条）` sections only for non-empty groups after filtering.
+- Use display-friendly section names when available, such as `Reuters · World` or `TechCrunch`.
+- Add a one-line summary blockquote under each non-empty section header:
+  - Format: `> N条｜最新 ...｜最早 ...｜时间倒序`
+- Separate adjacent non-empty sections with `---`.
+- Do not emit standalone `（0条）` section headers for empty groups.
+- Instead, append a summary section at the end:
+  - `## 本次无更新的分组（X个）`
+  - List each empty group as a bullet using its display name, or `- 无` when there are none.
+
+Example non-empty section:
 
 ```markdown
-## section（N条）
+## Reuters · World（3条）
+
+> 3条｜最新 2026-04-09 10:00:00｜最早 2026-04-09 08:00:00｜时间倒序
 
 ### [中文标题](https://...)
 - 发布时间：YYYY-MM-DD HH:MM:SS
+```
+
+Example empty-group summary:
+
+```markdown
+## 本次无更新的分组（2个）
+
+- Bloomberg
+- BBC
 ```
 
 Constraints:
@@ -151,5 +174,5 @@ Constraints:
 2. Failed command does not stop later commands.
 3. Duplicate URLs are removed globally, keeping first occurrence.
 4. Translation is model-handled, not external translation API.
-5. All sections are present, including `（0条）` sections.
+5. Non-empty sections include display names and summary blockquotes; empty sections are grouped under `本次无更新的分组`.
 6. Finalize writes `YYYY-MM-DD_dailyFreshNews.md` and `YYYY-MM-DD-HH-mm_freshNews.md`, not `*_fullNews.md`.
