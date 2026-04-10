@@ -160,6 +160,7 @@ def compact_text(raw: Any) -> str:
 def normalize_row(section: str, row: dict[str, Any]) -> dict[str, str] | None:
     title = str(row.get("title", "")).strip()
     url = str(row.get("url") or row.get("link") or "").strip()
+    summary = compact_text(row.get("summary") or row.get("description") or "")
     raw_time = row.get("time")
     if raw_time is None or not str(raw_time).strip():
         for fallback_key in (
@@ -178,12 +179,15 @@ def normalize_row(section: str, row: dict[str, Any]) -> dict[str, str] | None:
             raw_time = candidate
             break
     if title and url:
-        return {
+        item = {
             "section": section,
             "title": title,
             "time": normalize_time(raw_time),
             "url": url,
         }
+        if summary:
+            item["summary"] = summary
+        return item
 
     tweet_id = str(row.get("id", "")).strip()
     tweet_text = compact_text(row.get("text", ""))

@@ -29,11 +29,16 @@
 
 ### 2. `bloomberg_main`
 
-- 新增命令：`opencli bloomberg main --limit 15 --format json`
+- 旧命令：`opencli bloomberg main --limit 15 --format json`
+- 现命令：`opencli BloombergUser main --limit 15 --format json`
 - section：`bloomberg_main`
 - 原因：
   - 之前误以为有 `bloomberg-latest` 之类的命令
   - 实际内置可用的是 `opencli bloomberg main`
+  - 但官方 `bloomberg main` 返回 `title / summary / link / mediaLinks`，缺少 `time`
+  - 为避免 `freshNews` 中 Bloomberg 发布时间显示为 `页面未显示`，已复制官方 RSS 思路并新增用户自定义命令 `BloombergUser main`
+  - 新命令输出符合当前 skill 的新闻契约：`title / time / url`
+  - 新命令保留 `summary`，但不输出无用的 `mediaLinks`
 
 ## 当前 commands.json 的结构调整
 
@@ -88,6 +93,9 @@
 
 - `opencli bloomberg main` 返回的是 `link`，不是 `url`
 - 某些新闻源返回的时间字段名不统一
+- `BloombergUser main` 已在 adapter 层直接输出 `url` 和 `time`，因此后续优先使用它，而不是官方 `bloomberg main`
+- `summary` 会从 pipeline 透传到增量输出，最终在 `bloomberg_main` / `Bloomberg` 栏目下显示为 `摘要`
+- 因 Bloomberg RSS 摘要是英文，`run_incremental_news.py finalize` 会要求 `translated.json` 为这些摘要提供中文 `summary` 或 `summary_zh`；如果缺失或仍非中文，会直接失败，避免英文摘要进入最终 Markdown
 
 ## 已经踩过的坑
 

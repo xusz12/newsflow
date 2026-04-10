@@ -53,12 +53,16 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
    - `daily_errors`: accumulated errors and recovered degradations for the current day.
    - `run_id` / `started_at` / `finished_at`: immutable run identity fields. Downstream steps must preserve them exactly.
    - `state_snapshot`: the latest finalized daily state seen during `prepare`. `finalize` will reject stale snapshots.
-8. Translate titles into Chinese in-model:
+8. Translate display text into Chinese in-model:
    - Translate only `items_to_translate`.
+   - For every item, translate `title`.
+   - For Twitter quote items, translate quote text when present.
+   - For Bloomberg items with `summary`, translate `summary` too; final Markdown displays the translated summary under the Bloomberg item.
+   - `finalize` rejects untranslated Bloomberg summaries when the source summary is non-Chinese, so do not omit `summary_zh` / `summary` for Bloomberg entries.
    - Translation must stay in the model, not inside any script.
    - Write a JSON object into `<TRANSLATED_JSON_PATH>`:
      - Legacy format (still supported): map URL to translated title string.
-     - Extended format (recommended for Twitter quote support): map URL to object with `title` and optional quote fields.
+     - Extended format (recommended): map URL to object with `title`, optional quote fields, and optional `summary` / `summary_zh`.
    - If `items_to_translate` is empty, still write `{}` to `<TRANSLATED_JSON_PATH>`.
 
 ```json
@@ -67,6 +71,10 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
   "https://x.com/ivanalog_com/status/123?s=20": {
     "title": "中文正文标题",
     "quoted_text_zh": "引用推文中文翻译"
+  },
+  "https://www.bloomberg.com/news/articles/example": {
+    "title": "中文标题",
+    "summary_zh": "中文摘要"
   }
 }
 ```
@@ -160,6 +168,8 @@ Example empty-group summary:
 
 Constraints:
 - Missing time must be `页面未显示`.
+- Bloomberg summaries, when present, must be rendered in Chinese. The translation map may use `summary` or `summary_zh`; `summary_zh` is preferred for clarity.
+- If a non-Chinese Bloomberg summary is present but its translated summary is missing or still non-Chinese, `finalize` must fail instead of silently writing English text.
 - Preserve first-seen order: command order first, then source order.
 - Global dedupe key is absolute URL exact match.
 - Daily filtering removes yesterday's URLs.

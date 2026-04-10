@@ -68,7 +68,7 @@
     "section": "bloomberg_main",
     "command": [
       "opencli",
-      "bloomberg",
+      "BloombergUser",
       "main",
       "--limit",
       "15",

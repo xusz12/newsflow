@@ -139,6 +139,10 @@ def parse_command_str(command: Any, command_str: str) -> str:
     return ""
 
 
+def contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in str(text or ""))
+
+
 def normalize_item(item: Any) -> dict[str, str] | None:
     if not isinstance(item, dict):
         return None
@@ -157,6 +161,7 @@ def normalize_item(item: Any) -> dict[str, str] | None:
     quoted_text = str(item.get("quoted_text", quoted_text_raw)).strip()
     author_name = str(item.get("author_name", "")).strip()
     author_screen_name = str(item.get("author_screen_name", "")).strip()
+    summary = str(item.get("summary", "")).strip()
 
     payload = {
         "section": section,
@@ -173,6 +178,8 @@ def normalize_item(item: Any) -> dict[str, str] | None:
         payload["author_name"] = author_name
     if author_screen_name:
         payload["author_screen_name"] = author_screen_name
+    if summary:
+        payload["summary"] = summary
     return payload
 
 
@@ -452,6 +459,9 @@ def build_markdown(
             if quoted_text:
                 lines.extend(render_blockquote(quoted_text))
             lines.append(f"- 发布时间：{item['time']}")
+            summary = str(item.get("summary", "")).strip()
+            if item.get("section") == "bloomberg_main" and summary:
+                lines.append(f"- 摘要：{summary}")
             lines.append("")
         if index < len(non_empty_sections) - 1:
             lines.append("---")
@@ -503,7 +513,9 @@ def get_translation_map(path: Path) -> dict[str, dict[str, str]]:
             title_text = str(value.get("title", "")).strip()
             quoted_text = str(value.get("quoted_text", "")).strip()
             quoted_text_zh = str(value.get("quoted_text_zh", "")).strip()
-            if not title_text and not quoted_text and not quoted_text_zh:
+            summary_text = str(value.get("summary", "")).strip()
+            summary_zh = str(value.get("summary_zh", "")).strip()
+            if not title_text and not quoted_text and not quoted_text_zh and not summary_text and not summary_zh:
                 continue
             payload: dict[str, str] = {}
             if title_text:
@@ -512,14 +524,64 @@ def get_translation_map(path: Path) -> dict[str, dict[str, str]]:
                 payload["quoted_text"] = quoted_text
             if quoted_text_zh:
                 payload["quoted_text_zh"] = quoted_text_zh
+            if summary_text:
+                payload["summary"] = summary_text
+            if summary_zh:
+                payload["summary_zh"] = summary_zh
             mapping[url_text] = payload
             continue
     return mapping
 
 
+def translated_summary_for(item: dict[str, str], translations: dict[str, dict[str, str]]) -> str:
+    translated = translations.get(item["url"], {})
+    return (
+        str(translated.get("summary_zh", "")).strip()
+        or str(translated.get("summary", "")).strip()
+    )
+
+
+def validate_bloomberg_summary_translations(
+    items: list[dict[str, str]],
+    translations: dict[str, dict[str, str]],
+) -> None:
+    missing: list[str] = []
+    non_chinese: list[str] = []
+    for item in items:
+        if item.get("section") != "bloomberg_main":
+            continue
+        summary = str(item.get("summary", "")).strip()
+        if not summary or contains_cjk(summary):
+            continue
+        translated_summary = translated_summary_for(item, translations)
+        if not translated_summary:
+            missing.append(item["url"])
+            continue
+        if not contains_cjk(translated_summary):
+            non_chinese.append(item["url"])
+
+    if missing:
+        raise ValueError(
+            "{} Bloomberg items require translated summary/summary_zh. First 5 missing: {}".format(
+                len(missing), missing[:5]
+            )
+        )
+    if non_chinese:
+        raise ValueError(
+            "{} Bloomberg translated summaries do not appear to be Chinese. First 5: {}".format(
+                len(non_chinese), non_chinese[:5]
+            )
+        )
+
+
 def finalize_item(item: dict[str, str], translations: dict[str, dict[str, str]]) -> dict[str, str]:
     translated = translations.get(item["url"], {})
     title = str(translated.get("title", "")).strip() or item["raw_title"]
+    summary = (
+        str(translated.get("summary_zh", "")).strip()
+        or str(translated.get("summary", "")).strip()
+        or str(item.get("summary", "")).strip()
+    )
     quoted_text_raw = str(item.get("quoted_text_raw", item.get("quoted_text", ""))).strip()
     quoted_text_direct = str(translated.get("quoted_text", "")).strip()
     quoted_text_zh = str(translated.get("quoted_text_zh", "")).strip()
@@ -545,6 +607,8 @@ def finalize_item(item: dict[str, str], translations: dict[str, dict[str, str]])
         result["author_name"] = str(item.get("author_name", "")).strip()
     if item.get("author_screen_name"):
         result["author_screen_name"] = str(item.get("author_screen_name", "")).strip()
+    if summary:
+        result["summary"] = summary
     return result
 
 
@@ -849,6 +913,7 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         )
         if err is not None
     ]
+    validate_bloomberg_summary_translations(run_fresh_items_raw, translations)
 
     today_seen_urls = list(today_state["today_seen_urls"])
     today_seen_set = set(today_seen_urls)
