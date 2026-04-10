@@ -5,6 +5,16 @@
 1. 这个 skill 目前到底改过哪些 OpenCLI 自带命令
 2. 过去用 OpenCLI 时踩过哪些坑
 
+## 近期安全修复
+
+为避免旧的临时结果被误当成新一轮输入、以及正式 `freshNews` 文件被误覆盖，这个 skill 现在增加了几条硬约束：
+
+- 每次运行的中间文件必须放在 `.news_state/runs/<run-dir>/` 下，不能再复用 `.news_state/tmp_current.json` 这类平铺临时文件。
+- `run_news_pipeline.py` 现在会写出 `run_id / started_at / finished_at`，后续 `prepare / finalize` 会校验这些身份字段。
+- `run_incremental_news.py finalize` 已移除 `--allow-overwrite-existing-run`，正式 `YYYY-MM-DD-HH-mm_freshNews.md` 一旦存在就拒绝覆盖。
+- `prepare` 会拒绝消费早于当天最新 finalized run 的旧 `current.json`。
+- `finalize` 会校验 `prepare` 时看到的 state 快照；如果 state 期间发生变化，必须重新执行 `prepare`。
+
 ## 目前这个 skill 改过的 OpenCLI 内置命令
 
 以下只记录相对于原始 skill 配置有明确变更的内置命令。
@@ -25,148 +35,6 @@
   - 之前误以为有 `bloomberg-latest` 之类的命令
   - 实际内置可用的是 `opencli bloomberg main`
 
-### 3. `sina_china_news`
-
-- 新增命令：`opencli sina china-news --limit 10 --format json`
-- section：`sina_china_news`
-- 原因：
-  - 用于补充中文新闻源
-  - 直接命令验证时已确认返回字段包含 `title / url / time`
-
-#### `sina` 命令是怎么新增出来的
-
-这次不是直接靠 `opencli generate` 一步生成成功，而是先失败，再手工补出来的。
-
-实际过程：
-
-1. 先尝试：
-
-```bash
-opencli generate https://news.sina.com.cn/china/ --goal "获取前10条新闻"
-```
-
-结果：
-
-- 首轮失败
-- 加 `-v` 复查后仍失败
-- 探索阶段一直是：
-  - `Endpoints: 0 total, 0 API`
-  - `Capabilities: 0`
-
-2. 确认这不是“页面打不开”，而是“生成器没探测到接口”
-
-- 直接 `curl https://news.sina.com.cn/china/` 可以拿到页面 HTML
-- 说明问题不在访问失败，而在自动探测阶段没有识别出真正的数据源
-
-3. 改用手工排查页面数据来源
-
-从页面 HTML 里发现了两个关键线索：
-
-- 页面正文列表容器是 `feed_cont`
-- 页面加载了 `feed-news.js`
-
-同时页面内还有一段配置：
-
-- `pageid: 121`
-- `firstTab.lid: 1356`
-
-4. 顺着前端脚本继续定位真实接口
-
-检查 `feed-news.js` 后，确认它使用的是新浪 feed API。
-
-最后验证成功的真实接口是：
-
-```text
-https://feed.mix.sina.com.cn/api/roll/get?pageid=121&lid=1356&num=10&page=1
-```
-
-这个接口返回的 JSON 里已经直接包含：
-
-- `title`
-- `url`
-- `media_name`
-- `ctime` / `mtime` / `intime`
-
-也就是说，这个页面本身是可以稳定做成公开新闻命令的，只是 `opencli generate` 没自动识别出来。
-
-5. 手工新增 adapter
-
-最终新增了文件：
-
-- [china-news.js](/Users/x/.opencli/clis/sina/china-news.js)
-
-设计选择：
-
-- site：`sina`
-- name：`china-news`
-- strategy：`public`
-- browser：`false`
-- 参数：
-  - `--limit`
-  - `--page`
-
-输出字段：
-
-- `rank`
-- `title`
-- `source`
-- `time`
-- `url`
-
-6. 时间字段是怎么补出来的
-
-新浪这个接口没直接给格式化后的时间字符串，但给了 Unix 时间戳：
-
-- 优先用 `ctime`
-- 其次兜底 `mtime`
-- 再兜底 `intime`
-
-最后在 adapter 里把时间统一格式化成 `Asia/Shanghai` 下的：
-
-```text
-YYYY/MM/DD HH:MM:SS
-```
-
-7. 单命令验证
-
-实际验证命令：
-
-```bash
-opencli sina china-news --limit 10 --format json
-```
-
-确认返回结果已经稳定包含：
-
-- `title`
-- `source`
-- `time`
-- `url`
-
-#### 这次新增 `sina` 命令带来的经验
-
-这次很典型，适合以后碰到“新闻首页 generate 失败”时直接复用：
-
-- `opencli generate` 失败，不等于站点不能做
-- 很多新闻站首页并不是 SSR 直接把列表写进 HTML，而是前端脚本二次请求 feed API
-- 这类站点要重点找：
-  - 页面里的容器 ID
-  - 前端 feed 脚本
-  - `pageid` / `lid` / tab 配置
-- 一旦能定位到公开 feed API，通常比硬抓 DOM 更稳定
-
-可以把这次方法总结成一个小模板：
-
-1. 先跑 `opencli generate`
-2. 如果失败，再跑 `-v`
-3. 如果还是 0 endpoint，就直接看 HTML
-4. 重点搜：
-   - `feed`
-   - `pageid`
-   - `lid`
-   - `api`
-5. 找到真实接口后，优先手工写 `public` adapter
-6. 最后再把命令接入 `commands.json`
-
 ## 当前 commands.json 的结构调整
 
 目前 `references/commands.json` 的顺序被整理成：
@@ -183,7 +51,6 @@ opencli sina china-news --limit 10 --format json
 - `technology`
 - `bloomberg_main`
 - `bbc_news`
-- `sina_china_news`
 - `techcrunch`
 - `arstechnica`
 

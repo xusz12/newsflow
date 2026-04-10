@@ -11,6 +11,7 @@ description: Run configurable opencli news commands sequentially, skip failed co
 - Do not wrap the whole workflow into one `bash -lc` / `zsh -lc` script.
 - Do not rely on environment-variable expansion for script paths in the executed command.
 - Keep pipeline and incremental scripts invoked as literal absolute paths so `prefix_rule` can match reliably.
+- When artifact paths include spaces, quote them explicitly. Prefer relative artifact paths under the current `workdir` when possible.
 
 ## Workflow
 
@@ -20,40 +21,45 @@ description: Run configurable opencli news commands sequentially, skip failed co
    - Optional override: user-provided config path via `--config`.
    - Resolve skill root absolute path from this skill file location:
      - `/Users/x/.codex/skills/opencli-sequential-news-zh`
-3. Define shared working paths (must be reused in steps 4, 5, 7, and 8):
+3. Define run-scoped working paths. Do not reuse flat temp files like `.news_state/tmp_current.json`; each run must use its own artifact directory under `.news_state/runs/<run-dir>/`:
 
 ```bash
 WORKDIR=<absolute current working directory>
 STATE_DIR=<WORKDIR>/.news_state
-TMP_JSON_PATH=<STATE_DIR>/tmp_current.json
-INCREMENTAL_JSON_PATH=<STATE_DIR>/tmp_incremental.json
-TRANSLATED_JSON_PATH=<STATE_DIR>/tmp_translated.json
+RUNS_DIR=<STATE_DIR>/runs
+RUN_DIR=<RUNS_DIR>/<unique-run-dir>
+CURRENT_JSON_PATH=<RUN_DIR>/current.json
+INCREMENTAL_JSON_PATH=<RUN_DIR>/incremental.json
+TRANSLATED_JSON_PATH=<RUN_DIR>/translated.json
 ```
 
 4. Run pipeline script sequentially:
 
 ```bash
-python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_news_pipeline.py --config <commands.json> --out-json <TMP_JSON_PATH>
+python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_news_pipeline.py --config <commands.json> --out-json <CURRENT_JSON_PATH>
 ```
 
-5. Prepare incremental payload:
+5. Wait for step 4 to exit successfully before continuing. Never run `prepare` while the pipeline command is still in flight.
+6. Prepare incremental payload:
 
 ```bash
-python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py prepare --current-json <TMP_JSON_PATH> --state-dir <STATE_DIR> --out-json <INCREMENTAL_JSON_PATH>
+python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py prepare --current-json <CURRENT_JSON_PATH> --state-dir <STATE_DIR> --out-json <INCREMENTAL_JSON_PATH>
 ```
 
-6. Parse incremental JSON result:
+7. Parse incremental JSON result:
    - `run_fresh_items_raw`: this run's fresh stories after removing yesterday URLs and earlier same-day URLs.
    - `items_to_translate`: stories whose titles still need model translation for display.
-   - `current_run_errors`: failed commands from this run.
-   - `daily_errors`: accumulated failed commands for the current day.
-7. Translate titles into Chinese in-model:
+   - `current_run_errors`: errors and recovered degradations from this run. When a primary command fails but a retry or fallback succeeds, the pipeline may still emit an `已恢复：...` entry here so downstream reports can surface source health issues.
+   - `daily_errors`: accumulated errors and recovered degradations for the current day.
+   - `run_id` / `started_at` / `finished_at`: immutable run identity fields. Downstream steps must preserve them exactly.
+   - `state_snapshot`: the latest finalized daily state seen during `prepare`. `finalize` will reject stale snapshots.
+8. Translate titles into Chinese in-model:
    - Translate only `items_to_translate`.
    - Translation must stay in the model, not inside any script.
-   - Write a JSON object into `$TRANSLATED_JSON_PATH`:
+   - Write a JSON object into `<TRANSLATED_JSON_PATH>`:
      - Legacy format (still supported): map URL to translated title string.
      - Extended format (recommended for Twitter quote support): map URL to object with `title` and optional quote fields.
-   - If `items_to_translate` is empty, still write `{}` to `$TRANSLATED_JSON_PATH`.
+   - If `items_to_translate` is empty, still write `{}` to `<TRANSLATED_JSON_PATH>`.
 
 ```json
 {
@@ -65,17 +71,22 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
 }
 ```
 
-8. Finalize outputs:
+9. Finalize outputs:
 
 ```bash
 python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py finalize --incremental-json <INCREMENTAL_JSON_PATH> --translated-json <TRANSLATED_JSON_PATH> --state-dir <STATE_DIR> --out-dir <WORKDIR>
 ```
 
-9. Finalize writes exactly two user-facing Markdown files:
+10. Finalize writes exactly two user-facing Markdown files:
    - `YYYY-MM-DD_dailyFreshNews.md`: one rolling summary file per day.
    - `YYYY-MM-DD-HH-mm_freshNews.md`: one per-run fresh-news file.
    - Timezone: `Asia/Shanghai` unless user explicitly requests another timezone.
-10. Hidden state is stored separately in the state directory, one JSON file per day.
+11. Hidden state is stored separately in the state directory, one JSON file per day.
+12. Safety rules:
+   - `prepare` and `finalize` now require run artifacts to live under `<STATE_DIR>/runs/<run-dir>/`.
+   - `finalize` never overwrites an existing `YYYY-MM-DD-HH-mm_freshNews.md`.
+   - If `prepare` sees a `current.json` older than the latest finalized run, it fails instead of returning a misleading `0 条新增`.
+   - If state changes after `prepare`, rerun `prepare`; do not force `finalize`.
 
 ## State Schema Notes
 
@@ -85,11 +96,14 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
   - `today_seen_urls`, `today_first_seen_items`
   - `daily_errors`
   - `runs` (array of per-run summaries)
+- Run artifact directory: `<STATE_DIR>/runs/<run-dir>/`.
+- Pipeline payload now includes `run_id`, `started_at`, `finished_at`, and may include `current_json_path`.
 - Per-run counters are stored under `runs[-1]` (latest run), not at top level.
   - Read `runs[-1].run_fresh_count` for this run's fresh count.
   - Read `runs[-1].daily_fresh_count` for current day cumulative fresh count.
   - Read `runs[-1].error_count` for this run error count.
   - Read `runs[-1].run_fresh_path` / `runs[-1].daily_fresh_path` for output files.
+  - New runs also record audit fields such as `run_id`, `current_json_path`, `incremental_json_path`, `translated_json_path`, `prepared_at`, and `finalized_at`.
 - If `runs` is empty, treat run-level stats as unavailable rather than `0`.
 
 ## commands.json Format
@@ -176,3 +190,4 @@ Constraints:
 4. Translation is model-handled, not external translation API.
 5. Non-empty sections include display names and summary blockquotes; empty sections are grouped under `本次无更新的分组`.
 6. Finalize writes `YYYY-MM-DD_dailyFreshNews.md` and `YYYY-MM-DD-HH-mm_freshNews.md`, not `*_fullNews.md`.
+7. Reusing stale pipeline JSON or attempting to overwrite an existing run file must fail loudly.

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import shlex
 import sys
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,8 @@ from zoneinfo import ZoneInfo
 
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
+RUNS_DIRNAME = "runs"
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 TWITTER_SECTIONS = {
     "Ilya Sutskever",
     "郭明錤",
@@ -28,7 +32,6 @@ PORTAL_SECTIONS = {
     "technology",
     "bloomberg_main",
     "bbc_news",
-    "sina_china_news",
     "techcrunch",
     "arstechnica",
 }
@@ -40,10 +43,50 @@ SECTION_DISPLAY_NAMES = {
     "technology": "Reuters · Technology",
     "bloomberg_main": "Bloomberg",
     "bbc_news": "BBC",
-    "sina_china_news": "Sina · China News",
     "techcrunch": "TechCrunch",
     "arstechnica": "Ars Technica",
 }
+
+
+def format_timestamp(dt: datetime) -> str:
+    return dt.strftime(TIMESTAMP_FORMAT)
+
+
+def parse_timestamp(text: str, *, field_name: str) -> datetime:
+    value = str(text).strip()
+    if not value:
+        raise ValueError(f"Missing {field_name}")
+    try:
+        return datetime.strptime(value, TIMESTAMP_FORMAT)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field_name} '{value}': {exc}") from exc
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(text)
+            temp_path = Path(handle.name)
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def write_text_new_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def normalize_time(raw_time: Any) -> str:
@@ -78,8 +121,10 @@ def load_json_file(path: Path) -> Any:
 
 
 def write_json_file(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_text_atomic(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def parse_command_str(command: Any, command_str: str) -> str:
@@ -153,22 +198,84 @@ def normalize_error(error: Any) -> dict[str, str] | None:
     return payload
 
 
-def parse_run_datetime(payload: dict[str, Any]) -> tuple[datetime, str]:
+def extract_run_metadata(payload: dict[str, Any], *, source_label: str) -> dict[str, Any]:
     timezone_name = str(payload.get("timezone", DEFAULT_TIMEZONE)).strip() or DEFAULT_TIMEZONE
     try:
         timezone = ZoneInfo(timezone_name)
     except Exception as exc:
         raise ValueError(f"Invalid timezone '{timezone_name}': {exc}") from exc
 
-    generated_at = str(payload.get("generated_at", "")).strip()
-    if generated_at:
-        try:
-            dt = datetime.strptime(generated_at, "%Y-%m-%d %H:%M:%S")
-        except ValueError as exc:
-            raise ValueError(f"Invalid generated_at '{generated_at}': {exc}") from exc
-        return dt.replace(tzinfo=timezone), timezone_name
+    run_id = str(payload.get("run_id", "")).strip()
+    if not run_id:
+        raise ValueError(f"{source_label} is missing run_id")
 
-    return datetime.now(timezone), timezone_name
+    started_at_text = str(payload.get("started_at", "")).strip()
+    finished_at_text = str(payload.get("finished_at", payload.get("generated_at", ""))).strip()
+    generated_at_text = str(payload.get("generated_at", finished_at_text)).strip() or finished_at_text
+
+    started_at = parse_timestamp(started_at_text, field_name=f"{source_label}.started_at").replace(
+        tzinfo=timezone
+    )
+    finished_at = parse_timestamp(
+        finished_at_text,
+        field_name=f"{source_label}.finished_at",
+    ).replace(tzinfo=timezone)
+    generated_at = parse_timestamp(
+        generated_at_text,
+        field_name=f"{source_label}.generated_at",
+    ).replace(tzinfo=timezone)
+
+    if finished_at < started_at:
+        raise ValueError(
+            f"{source_label} has finished_at earlier than started_at: "
+            f"{finished_at_text} < {started_at_text}"
+        )
+    if generated_at != finished_at:
+        raise ValueError(
+            f"{source_label} has mismatched generated_at and finished_at: "
+            f"{generated_at_text} != {finished_at_text}"
+        )
+
+    return {
+        "run_id": run_id,
+        "timezone_name": timezone_name,
+        "timezone": timezone,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "generated_at": generated_at,
+        "started_at_text": started_at_text,
+        "finished_at_text": finished_at_text,
+        "generated_at_text": generated_at_text,
+    }
+
+
+def get_runs_root(state_dir: Path) -> Path:
+    return state_dir / RUNS_DIRNAME
+
+
+def validate_run_artifact_path(path: Path, state_dir: Path, *, label: str) -> Path:
+    runs_root = get_runs_root(state_dir)
+    run_dir = path.parent
+    if run_dir.parent != runs_root:
+        raise ValueError(
+            f"{label} must be stored under {runs_root}/<run-dir>/..., got {path}"
+        )
+    return run_dir
+
+
+def latest_run_snapshot(state: dict[str, Any]) -> dict[str, str]:
+    runs = state.get("runs", [])
+    if not runs:
+        return {
+            "latest_finalized_run_id": "",
+            "latest_finalized_generated_at": "",
+        }
+
+    latest = runs[-1]
+    return {
+        "latest_finalized_run_id": str(latest.get("run_id", "")).strip(),
+        "latest_finalized_generated_at": str(latest.get("generated_at", "")).strip(),
+    }
 
 
 def normalize_section_order(raw_sections: Any) -> list[str]:
@@ -449,12 +556,30 @@ def prepare_incremental(args: argparse.Namespace) -> int:
     current_json_path = Path(args.current_json).expanduser().resolve()
     out_json_path = Path(args.out_json).expanduser().resolve()
     state_dir = Path(args.state_dir).expanduser().resolve()
+    current_run_dir = validate_run_artifact_path(current_json_path, state_dir, label="current-json")
+    incremental_run_dir = validate_run_artifact_path(out_json_path, state_dir, label="out-json")
+    if current_run_dir != incremental_run_dir:
+        raise ValueError(
+            "current-json and out-json must live in the same run artifact directory"
+        )
+    if current_json_path == out_json_path:
+        raise ValueError("current-json and out-json must be different files")
 
     raw_payload = load_json_file(current_json_path)
     if not isinstance(raw_payload, dict):
         raise ValueError("current-json must contain an object")
 
-    run_dt, timezone_name = parse_run_datetime(raw_payload)
+    run_meta = extract_run_metadata(raw_payload, source_label="current-json")
+    current_json_path_text = str(raw_payload.get("current_json_path", "")).strip()
+    if current_json_path_text:
+        reported_path = Path(current_json_path_text).expanduser().resolve()
+        if reported_path != current_json_path:
+            raise ValueError(
+                "current-json payload path does not match the provided current-json argument"
+            )
+
+    run_dt = run_meta["generated_at"]
+    timezone_name = run_meta["timezone_name"]
     date_text = run_dt.strftime("%Y-%m-%d")
     run_file_timestamp = run_dt.strftime("%Y-%m-%d-%H-%M")
     yesterday_text = (run_dt - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -484,12 +609,37 @@ def prepare_incremental(args: argparse.Namespace) -> int:
         if err is not None
     ]
     for error in current_errors:
-        error["generated_at"] = run_dt.strftime("%Y-%m-%d %H:%M:%S")
+        error["generated_at"] = run_meta["generated_at_text"]
 
     today_state_path = state_path_for_date(state_dir, date_text)
     yesterday_state_path = state_path_for_date(state_dir, yesterday_text)
     today_state = load_state(today_state_path, date_text, timezone_name)
     yesterday_state = load_state(yesterday_state_path, yesterday_text, timezone_name)
+    latest_snapshot = latest_run_snapshot(today_state)
+    latest_generated_at_text = latest_snapshot["latest_finalized_generated_at"]
+    if latest_generated_at_text:
+        latest_generated_at = parse_timestamp(
+            latest_generated_at_text,
+            field_name="state.latest_finalized_generated_at",
+        ).replace(tzinfo=run_meta["timezone"])
+        if run_meta["generated_at"] <= latest_generated_at:
+            raise ValueError(
+                "current-json is not newer than the latest finalized run: "
+                f"{run_meta['generated_at_text']} <= {latest_generated_at_text}"
+            )
+
+    for entry in today_state["runs"]:
+        existing_run_id = str(entry.get("run_id", "")).strip()
+        existing_generated_at = str(entry.get("generated_at", "")).strip()
+        if existing_run_id and existing_run_id == run_meta["run_id"]:
+            raise ValueError(
+                f"run_id already finalized for today: {run_meta['run_id']}"
+            )
+        if existing_generated_at == run_meta["generated_at_text"]:
+            raise ValueError(
+                "generated_at already finalized for today: "
+                f"{run_meta['generated_at_text']}"
+            )
 
     merged_section_order = merge_section_order(today_state["section_order"], current_section_order)
     today_seen_before = set(today_state["today_seen_urls"])
@@ -517,7 +667,10 @@ def prepare_incremental(args: argparse.Namespace) -> int:
 
     payload = {
         "date": date_text,
-        "generated_at": run_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "run_id": run_meta["run_id"],
+        "started_at": run_meta["started_at_text"],
+        "finished_at": run_meta["finished_at_text"],
+        "generated_at": run_meta["generated_at_text"],
         "timezone": timezone_name,
         "section_order": merged_section_order,
         "run_file_timestamp": run_file_timestamp,
@@ -527,6 +680,15 @@ def prepare_incremental(args: argparse.Namespace) -> int:
         "current_run_errors": current_errors,
         "daily_errors": daily_errors,
         "items_to_translate": run_fresh_items_raw,
+        "paths": {
+            "run_artifact_dir": str(current_run_dir),
+            "current_json_path": str(current_json_path),
+            "incremental_json_path": str(out_json_path),
+        },
+        "state_snapshot": {
+            **latest_snapshot,
+            "prepared_at": format_timestamp(datetime.now(run_meta["timezone"])),
+        },
         "state": {
             "today_state_path": str(today_state_path),
             "yesterday_state_path": str(yesterday_state_path),
@@ -550,22 +712,71 @@ def finalize_incremental(args: argparse.Namespace) -> int:
     translated_json_path = Path(args.translated_json).expanduser().resolve()
     state_dir = Path(args.state_dir).expanduser().resolve()
     out_dir = Path(args.out_dir).expanduser().resolve()
+    incremental_run_dir = validate_run_artifact_path(
+        incremental_json_path,
+        state_dir,
+        label="incremental-json",
+    )
+    translated_run_dir = validate_run_artifact_path(
+        translated_json_path,
+        state_dir,
+        label="translated-json",
+    )
+    if incremental_run_dir != translated_run_dir:
+        raise ValueError(
+            "incremental-json and translated-json must live in the same run artifact directory"
+        )
 
     raw_payload = load_json_file(incremental_json_path)
     if not isinstance(raw_payload, dict):
         raise ValueError("incremental-json must contain an object")
 
+    run_meta = extract_run_metadata(raw_payload, source_label="incremental-json")
     translations = get_translation_map(translated_json_path)
 
-    date_text = str(raw_payload.get("date", "")).strip()
-    if not date_text:
-        raise ValueError("incremental-json is missing date")
+    expected_date_text = run_meta["generated_at"].strftime("%Y-%m-%d")
+    date_text = str(raw_payload.get("date", expected_date_text)).strip() or expected_date_text
+    if date_text != expected_date_text:
+        raise ValueError(
+            f"incremental-json date does not match generated_at: {date_text} != {expected_date_text}"
+        )
 
-    timezone_name = str(raw_payload.get("timezone", DEFAULT_TIMEZONE)).strip() or DEFAULT_TIMEZONE
-    generated_at = str(raw_payload.get("generated_at", "")).strip()
-    run_file_timestamp = str(raw_payload.get("run_file_timestamp", "")).strip()
+    timezone_name = run_meta["timezone_name"]
+    generated_at = run_meta["generated_at_text"]
+    run_id = run_meta["run_id"]
+    run_file_timestamp = str(
+        raw_payload.get(
+            "run_file_timestamp",
+            run_meta["generated_at"].strftime("%Y-%m-%d-%H-%M"),
+        )
+    ).strip()
     if not run_file_timestamp:
         raise ValueError("incremental-json is missing run_file_timestamp")
+    expected_run_file_timestamp = run_meta["generated_at"].strftime("%Y-%m-%d-%H-%M")
+    if run_file_timestamp != expected_run_file_timestamp:
+        raise ValueError(
+            "incremental-json run_file_timestamp does not match generated_at: "
+            f"{run_file_timestamp} != {expected_run_file_timestamp}"
+        )
+
+    paths_payload = raw_payload.get("paths", {})
+    if not isinstance(paths_payload, dict):
+        raise ValueError("incremental-json paths must contain an object")
+    run_artifact_dir_text = str(paths_payload.get("run_artifact_dir", "")).strip()
+    current_json_path_text = str(paths_payload.get("current_json_path", "")).strip()
+    expected_incremental_json_path_text = str(paths_payload.get("incremental_json_path", "")).strip()
+    if not run_artifact_dir_text or not current_json_path_text or not expected_incremental_json_path_text:
+        raise ValueError(
+            "incremental-json is missing required run artifact paths"
+        )
+    if Path(run_artifact_dir_text).expanduser().resolve() != incremental_run_dir:
+        raise ValueError("incremental-json run artifact directory does not match its file location")
+    if Path(expected_incremental_json_path_text).expanduser().resolve() != incremental_json_path:
+        raise ValueError("incremental-json path does not match the stored prepare output path")
+
+    state_snapshot = raw_payload.get("state_snapshot", {})
+    if not isinstance(state_snapshot, dict):
+        raise ValueError("incremental-json state_snapshot must contain an object")
 
     today_state_path = state_path_for_date(state_dir, date_text)
     yesterday_text = (
@@ -575,6 +786,27 @@ def finalize_incremental(args: argparse.Namespace) -> int:
 
     today_state = load_state(today_state_path, date_text, timezone_name)
     yesterday_state = load_state(yesterday_state_path, yesterday_text, timezone_name)
+    latest_snapshot_now = latest_run_snapshot(today_state)
+    if (
+        latest_snapshot_now["latest_finalized_generated_at"]
+        != str(state_snapshot.get("latest_finalized_generated_at", "")).strip()
+        or latest_snapshot_now["latest_finalized_run_id"]
+        != str(state_snapshot.get("latest_finalized_run_id", "")).strip()
+    ):
+        raise ValueError(
+            "State changed since prepare; rerun prepare with the latest daily state before finalize"
+        )
+
+    for entry in today_state["runs"]:
+        existing_run_id = str(entry.get("run_id", "")).strip()
+        existing_generated_at = str(entry.get("generated_at", "")).strip()
+        if existing_run_id and existing_run_id == run_id:
+            raise FileExistsError(f"Run already finalized for run_id: {run_id}")
+        if existing_generated_at == generated_at:
+            raise FileExistsError(
+                f"Run already finalized for generated_at: {generated_at}"
+            )
+
     merged_section_order = merge_section_order(
         today_state["section_order"],
         normalize_section_order(raw_payload.get("section_order", [])),
@@ -649,40 +881,38 @@ def finalize_incremental(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     run_fresh_path = out_dir / f"{run_file_timestamp}_freshNews.md"
     daily_fresh_path = out_dir / f"{date_text}_dailyFreshNews.md"
-
-    existing_run = next(
-        (
-            entry
-            for entry in today_state["runs"]
-            if str(entry.get("generated_at", "")).strip() == generated_at
-        ),
-        None,
-    )
-    if run_fresh_path.exists() and not args.allow_overwrite_existing_run:
-        if existing_run is not None:
-            raise FileExistsError(
-                "Refusing to overwrite an existing finalized run at "
-                f"{run_fresh_path} for generated_at {generated_at}. "
-                "Pass --allow-overwrite-existing-run to overwrite intentionally."
-            )
+    if run_fresh_path.exists():
         raise FileExistsError(
-            f"Refusing to overwrite existing run file: {run_fresh_path}. "
-            "Pass --allow-overwrite-existing-run to overwrite intentionally."
+            f"Refusing to overwrite existing run file: {run_fresh_path}"
         )
 
-    run_fresh_path.write_text(
-        build_markdown(merged_section_order, run_fresh_items_final, current_run_errors),
-        encoding="utf-8",
+    run_fresh_markdown = build_markdown(
+        merged_section_order,
+        run_fresh_items_final,
+        current_run_errors,
     )
-    daily_fresh_path.write_text(
-        build_markdown(merged_section_order, daily_fresh_items_final, daily_errors),
-        encoding="utf-8",
+    daily_fresh_markdown = build_markdown(
+        merged_section_order,
+        daily_fresh_items_final,
+        daily_errors,
     )
+    write_text_new_file(run_fresh_path, run_fresh_markdown)
+    write_text_atomic(daily_fresh_path, daily_fresh_markdown)
 
-    runs = [entry for entry in today_state["runs"] if str(entry.get("generated_at", "")).strip() != generated_at]
+    runs = list(today_state["runs"])
+    finalized_at = format_timestamp(datetime.now(run_meta["timezone"]))
     runs.append(
         {
+            "run_id": run_id,
+            "started_at": run_meta["started_at_text"],
+            "finished_at": run_meta["finished_at_text"],
             "generated_at": generated_at,
+            "prepared_at": str(state_snapshot.get("prepared_at", "")).strip(),
+            "finalized_at": finalized_at,
+            "run_artifact_dir": str(incremental_run_dir),
+            "current_json_path": current_json_path_text,
+            "incremental_json_path": str(incremental_json_path),
+            "translated_json_path": str(translated_json_path),
             "run_fresh_path": str(run_fresh_path),
             "daily_fresh_path": str(daily_fresh_path),
             "run_fresh_count": len(run_fresh_items_final),
@@ -704,9 +934,13 @@ def finalize_incremental(args: argparse.Namespace) -> int:
 
     result = {
         "date": date_text,
+        "run_id": run_id,
+        "started_at": run_meta["started_at_text"],
+        "finished_at": run_meta["finished_at_text"],
         "generated_at": generated_at,
         "timezone": timezone_name,
         "section_order": merged_section_order,
+        "run_artifact_dir": str(incremental_run_dir),
         "run_fresh_path": str(run_fresh_path),
         "daily_fresh_path": str(daily_fresh_path),
         "state_path": str(today_state_path),
@@ -738,11 +972,6 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("--translated-json", required=True, help="Model-produced translation map JSON")
     finalize.add_argument("--state-dir", required=True, help="Directory for per-day state JSON files")
     finalize.add_argument("--out-dir", required=True, help="Directory for markdown outputs")
-    finalize.add_argument(
-        "--allow-overwrite-existing-run",
-        action="store_true",
-        help="Allow overwriting an existing per-run fresh news markdown file",
-    )
     finalize.set_defaults(handler=finalize_incremental)
 
     return parser

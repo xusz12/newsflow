@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,43 @@ NOISE_PREFIXES = (
     "To eliminate this warning",
     "(Use `node --trace-warnings",
 )
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def format_timestamp(dt: datetime) -> str:
+    return dt.strftime(TIMESTAMP_FORMAT)
+
+
+def make_run_id(started_at: datetime) -> str:
+    return started_at.strftime("%Y%m%d-%H%M%S-%f")
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(text)
+            temp_path = Path(handle.name)
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def write_json_file(path: Path, payload: Any) -> None:
+    write_text_atomic(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def normalize_time(raw_time: Any) -> str:
@@ -278,6 +317,49 @@ def execute_command_once(
     }
 
 
+def build_recovered_error(
+    *,
+    section: str,
+    primary_command: list[str],
+    primary_attempts: list[dict[str, Any]],
+    success_attempt: dict[str, Any],
+    used_fallback: bool,
+) -> dict[str, Any]:
+    primary_command_str = " ".join(shlex.quote(part) for part in primary_command)
+    failed_reasons = [
+        attempt["failed_reason"] or "unknown"
+        for attempt in primary_attempts
+        if not attempt["ok"]
+    ]
+    failed_reason_text = "; ".join(failed_reasons) if failed_reasons else "unknown"
+
+    if used_fallback:
+        recovered_error = (
+            f"已恢复：主命令失败（尝试 {len(primary_attempts)} 次，原因：{failed_reason_text}）；"
+            f"fallback 成功：{success_attempt['command_str']}"
+        )
+    else:
+        success_index = next(
+            (
+                index
+                for index, attempt in enumerate(primary_attempts, start=1)
+                if attempt["ok"]
+            ),
+            len(primary_attempts),
+        )
+        recovered_error = (
+            f"已恢复：主命令失败（原因：{failed_reason_text}），"
+            f"第 {success_index} 次重试成功"
+        )
+
+    return {
+        "section": section,
+        "command": primary_command,
+        "command_str": primary_command_str,
+        "error": recovered_error,
+    }
+
+
 def load_config(config_path: Path) -> list[dict[str, Any]]:
     if not config_path.exists():
         raise FileNotFoundError(f"config not found: {config_path}")
@@ -393,6 +475,15 @@ def run_pipeline(
                         "used_command": success_attempt["command"],
                     }
                 )
+                errors.append(
+                    build_recovered_error(
+                        section=section,
+                        primary_command=command,
+                        primary_attempts=primary_attempts,
+                        success_attempt=success_attempt,
+                        used_fallback=used_fallback,
+                    )
+                )
             continue
 
         final_error = ""
@@ -470,6 +561,9 @@ def main() -> int:
         print(f"Invalid timezone '{args.timezone}': {exc}", file=sys.stderr)
         return 2
 
+    started_at = datetime.now(tz)
+    run_id = make_run_id(started_at)
+
     try:
         entries = load_config(Path(args.config).expanduser().resolve())
         result = run_pipeline(
@@ -480,16 +574,21 @@ def main() -> int:
         print(f"Pipeline error: {exc}", file=sys.stderr)
         return 2
 
+    finished_at = datetime.now(tz)
+
     payload = {
-        "generated_at": datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S"),
+        "run_id": run_id,
+        "started_at": format_timestamp(started_at),
+        "finished_at": format_timestamp(finished_at),
+        "generated_at": format_timestamp(finished_at),
         "timezone": args.timezone,
         **result,
     }
 
     if args.out_json:
         out_path = Path(args.out_json).expanduser().resolve()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload["current_json_path"] = str(out_path)
+        write_json_file(out_path, payload)
 
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

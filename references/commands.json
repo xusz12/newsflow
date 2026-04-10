@@ -101,18 +101,6 @@
     "min_valid_items": 1
   },
   {
-    "section": "sina_china_news",
-    "command": [
-      "opencli",
-      "sina",
-      "china-news",
-      "--limit",
-      "10",
-      "--format",
-      "json"
-    ]
-  },
-  {
     "section": "techcrunch",
     "command": [
       "opencli",
