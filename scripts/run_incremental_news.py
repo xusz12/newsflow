@@ -1087,7 +1087,7 @@ def finalize_incremental(args: argparse.Namespace) -> int:
     except Exception as exc:
         raise incremental_error("FINALIZE_WRITE_FAILED", str(exc)) from exc
     run_fresh_path = out_dir / f"{run_file_timestamp}_freshNews.md"
-    daily_fresh_path = out_dir / f"{date_text}_dailyFreshNews.md"
+    daily_fresh_path = out_dir / f"dailyFreshNews_{date_text}.md"
     if run_fresh_path.exists():
         raise incremental_error(
             "FINALIZE_OUTPUT_EXISTS",

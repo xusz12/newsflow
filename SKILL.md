@@ -138,7 +138,7 @@ Non-recoverable finalize codes:
 - `FINALIZE_WRITE_FAILED`: an output Markdown or state file could not be written.
 
 10. Finalize writes exactly two user-facing Markdown files:
-   - `YYYY-MM-DD_dailyFreshNews.md`: one rolling summary file per day.
+   - `dailyFreshNews_YYYY-MM-DD.md`: one rolling summary file per day.
    - `YYYY-MM-DD-HH-mm_freshNews.md`: one per-run fresh-news file.
    - Timezone: `Asia/Shanghai` unless user explicitly requests another timezone.
 11. Hidden state is stored separately in the state directory, one JSON file per day.
@@ -252,5 +252,5 @@ Constraints:
 3. Duplicate URLs are removed globally, keeping first occurrence.
 4. Translation is model-handled, not external translation API.
 5. Non-empty sections include display names and summary blockquotes; empty sections are grouped under `本次无更新的分组`.
-6. Finalize writes `YYYY-MM-DD_dailyFreshNews.md` and `YYYY-MM-DD-HH-mm_freshNews.md`, not `*_fullNews.md`.
+6. Finalize writes `dailyFreshNews_YYYY-MM-DD.md` and `YYYY-MM-DD-HH-mm_freshNews.md`, not `*_fullNews.md`.
 7. Reusing stale pipeline JSON or attempting to overwrite an existing run file must fail loudly.

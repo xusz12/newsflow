@@ -1,4 +1,4 @@
 interface:
   display_name: "opencli-sequential-news-zh"
   short_description: "Sequential opencli news pipeline with daily and per-run freshness tracking"
-  default_prompt: "Run configured opencli news commands sequentially, skip failed commands, normalize and dedupe by URL globally, then call run_incremental_news.py prepare, translate only items_to_translate in-model, write a URL-to-title JSON mapping, and call run_incremental_news.py finalize to export YYYY-MM-DD_dailyFreshNews.md plus YYYY-MM-DD-HH-mm_freshNews.md with errors sections."
+  default_prompt: "Run configured opencli news commands sequentially, skip failed commands, normalize and dedupe by URL globally, then call run_incremental_news.py prepare, translate only items_to_translate in-model, write a URL-to-title JSON mapping, and call run_incremental_news.py finalize to export dailyFreshNews_YYYY-MM-DD.md plus YYYY-MM-DD-HH-mm_freshNews.md with errors sections."

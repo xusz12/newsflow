@@ -12,6 +12,7 @@
 - 每次运行的中间文件必须放在 `.news_state/runs/<run-dir>/` 下，不能再复用 `.news_state/tmp_current.json` 这类平铺临时文件。
 - `run_news_pipeline.py` 现在会写出 `run_id / started_at / finished_at`，后续 `prepare / finalize` 会校验这些身份字段。
 - `run_incremental_news.py finalize` 已移除 `--allow-overwrite-existing-run`，正式 `YYYY-MM-DD-HH-mm_freshNews.md` 一旦存在就拒绝覆盖。
+- daily 汇总文件正式命名现为 `dailyFreshNews_YYYY-MM-DD.md`，不再使用 `YYYY-MM-DD_dailyFreshNews.md`。
 - `prepare` 会拒绝消费早于当天最新 finalized run 的旧 `current.json`。
 - `prepare` 现在会为典型失败输出 `PREPARE_*` 错误码；skill 执行层可以对 stale/duplicate/临时 artifact 类错误自动新开一轮并最多重试一次。
 - `finalize` 现在会为典型失败输出 `FINALIZE_*` 错误码；如果 state 在 prepare 后发生变化，skill 执行层只用同一个 `current.json` 重新 `prepare` 一次，不自动重新跑 pipeline。

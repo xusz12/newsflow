@@ -511,6 +511,51 @@ class NewsWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("[FINALIZE_OUTPUT_EXISTS]", result.stderr)
         self.assertEqual(existing_run_file.read_text(encoding="utf-8"), "existing\n")
 
+    def test_finalize_writes_new_daily_filename_and_records_it_in_state(self) -> None:
+        run_dir = self.make_run_dir("new-daily-name")
+        incremental_json = run_dir / "incremental.json"
+        translated_json = run_dir / "translated.json"
+        write_json(self.today_state_path, make_state_payload(runs=[]))
+        write_json(
+            incremental_json,
+            self.make_incremental_payload(
+                run_dir=run_dir,
+                run_id="new-daily-name",
+                started_at="2026-04-09 12:00:00",
+                finished_at="2026-04-09 12:05:00",
+            ),
+        )
+        write_json(translated_json, {})
+
+        result = self.run_cmd(
+            str(INCREMENTAL_SCRIPT),
+            "finalize",
+            "--incremental-json",
+            str(incremental_json),
+            "--translated-json",
+            str(translated_json),
+            "--state-dir",
+            str(self.state_dir),
+            "--out-dir",
+            str(self.out_dir),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        daily_path = self.out_dir / "dailyFreshNews_2026-04-09.md"
+        old_daily_path = self.out_dir / "2026-04-09_dailyFreshNews.md"
+        run_path = self.out_dir / "2026-04-09-12-05_freshNews.md"
+        state_payload = read_json(self.today_state_path)
+
+        self.assertTrue(daily_path.exists())
+        self.assertFalse(old_daily_path.exists())
+        self.assertTrue(run_path.exists())
+        self.assertEqual(Path(payload["daily_fresh_path"]).resolve(), daily_path.resolve())
+        self.assertEqual(
+            Path(state_payload["runs"][0]["daily_fresh_path"]).resolve(),
+            daily_path.resolve(),
+        )
+
     def test_finalize_rejects_state_drift_since_prepare(self) -> None:
         run_dir = self.make_run_dir("drift-run")
         incremental_json = run_dir / "incremental.json"
