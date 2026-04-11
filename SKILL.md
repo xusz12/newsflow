@@ -184,6 +184,15 @@ Rules:
 - Keep order as desired final processing order.
 - Add/remove sources by adding/removing objects only.
 - `command` supports string array (recommended) or shell string.
+- Optional reliability fields are supported per source:
+  - `retry_once`: retry the primary command once before recording failure.
+  - `fallback_command`: secondary command when primary still fails.
+  - `treat_empty_as_failure`: treat zero valid rows as failure for retry/fallback.
+  - `min_valid_items`: minimum valid rows required for success when empty-check is enabled.
+- Current policy in this skill:
+  - News portal sources use `retry_once`; most also use `treat_empty_as_failure: true` and `min_valid_items: 1`.
+  - `bbc_news` keeps `retry_once + fallback_command`.
+  - Twitter sources use `retry_once` only; do not force empty-as-failure by default.
 
 ## Output Contract
 
