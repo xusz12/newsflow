@@ -13,7 +13,9 @@
 - `run_news_pipeline.py` 现在会写出 `run_id / started_at / finished_at`，后续 `prepare / finalize` 会校验这些身份字段。
 - `run_incremental_news.py finalize` 已移除 `--allow-overwrite-existing-run`，正式 `YYYY-MM-DD-HH-mm_freshNews.md` 一旦存在就拒绝覆盖。
 - `prepare` 会拒绝消费早于当天最新 finalized run 的旧 `current.json`。
-- `finalize` 会校验 `prepare` 时看到的 state 快照；如果 state 期间发生变化，必须重新执行 `prepare`。
+- `prepare` 现在会为典型失败输出 `PREPARE_*` 错误码；skill 执行层可以对 stale/duplicate/临时 artifact 类错误自动新开一轮并最多重试一次。
+- `finalize` 现在会为典型失败输出 `FINALIZE_*` 错误码；如果 state 在 prepare 后发生变化，skill 执行层只用同一个 `current.json` 重新 `prepare` 一次，不自动重新跑 pipeline。
+- Bloomberg summary 缺翻译或翻译仍非中文时不再直接终止 finalize；执行层先尝试补翻译，仍不行则使用原文 summary，并在最终 Markdown 的 errors 区域记录 warning。
 
 ## 目前这个 skill 改过的 OpenCLI 内置命令
 
@@ -95,7 +97,7 @@
 - 某些新闻源返回的时间字段名不统一
 - `BloombergUser main` 已在 adapter 层直接输出 `url` 和 `time`，因此后续优先使用它，而不是官方 `bloomberg main`
 - `summary` 会从 pipeline 透传到增量输出，最终在 `bloomberg_main` / `Bloomberg` 栏目下显示为 `摘要`
-- 因 Bloomberg RSS 摘要是英文，`run_incremental_news.py finalize` 会要求 `translated.json` 为这些摘要提供中文 `summary` 或 `summary_zh`；如果缺失或仍非中文，会直接失败，避免英文摘要进入最终 Markdown
+- 因 Bloomberg RSS 摘要通常是英文，执行 skill 时应先补齐中文 `summary` 或 `summary_zh`；如果补翻译后仍缺失或仍非中文，`run_incremental_news.py finalize` 会使用原文 summary 继续输出，并在 errors 区域记录 warning
 
 ## 已经踩过的坑
 

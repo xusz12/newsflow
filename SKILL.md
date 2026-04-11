@@ -46,6 +46,31 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_news_pipel
 python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py prepare --current-json <CURRENT_JSON_PATH> --state-dir <STATE_DIR> --out-json <INCREMENTAL_JSON_PATH>
 ```
 
+Prepare recovery policy:
+
+- If `prepare` succeeds, continue normally.
+- If `prepare` fails, inspect stderr for a bracketed `PREPARE_*` error code.
+- For recoverable prepare codes, abandon the current run artifact directory, create a fresh `<RUN_DIR>`, rerun the pipeline from step 4, then rerun `prepare` once.
+- Do not reuse the failed run's `current.json`, `incremental.json`, or `translated.json`.
+- Do not retry more than once. If the second `prepare` fails, stop and report both the original and retry failures.
+- Do not retry non-recoverable prepare codes; stop and report the error.
+- When an automatic prepare retry happens, mention it in the final response with the first failure reason and the new run directory.
+
+Recoverable prepare codes:
+
+- `PREPARE_STALE_CURRENT_JSON`: the current payload is older than the latest finalized run.
+- `PREPARE_RUN_ID_ALREADY_FINALIZED`: the run id has already been finalized today.
+- `PREPARE_GENERATED_AT_ALREADY_FINALIZED`: the generated timestamp has already been finalized today.
+- `PREPARE_CURRENT_JSON_UNREADABLE`: the current run artifact is missing or not valid JSON.
+
+Non-recoverable prepare codes:
+
+- `PREPARE_BAD_ARTIFACT_PATH`: artifact paths are outside the run directory, mixed across run directories, identical, or inconsistent with stored metadata.
+- `PREPARE_BAD_CURRENT_JSON`: `current.json` exists but does not match the expected pipeline payload structure.
+- `PREPARE_BAD_RUN_METADATA`: run identity, timezone, or timestamp metadata is missing or invalid.
+- `PREPARE_BAD_STATE`: the daily state file is invalid or cannot be parsed safely.
+- `PREPARE_WRITE_FAILED`: `incremental.json` could not be written.
+
 7. Parse incremental JSON result:
    - `run_fresh_items_raw`: this run's fresh stories after removing yesterday URLs and earlier same-day URLs.
    - `items_to_translate`: stories whose titles still need model translation for display.
@@ -58,7 +83,8 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
    - For every item, translate `title`.
    - For Twitter quote items, translate quote text when present.
    - For Bloomberg items with `summary`, translate `summary` too; final Markdown displays the translated summary under the Bloomberg item.
-   - `finalize` rejects untranslated Bloomberg summaries when the source summary is non-Chinese, so do not omit `summary_zh` / `summary` for Bloomberg entries.
+   - Before `finalize`, verify Bloomberg items whose source `summary` is non-Chinese. If `translated.json` is missing a Chinese `summary_zh` / `summary`, add one in-model and rewrite `translated.json`.
+   - If a Bloomberg summary still cannot be translated after this repair attempt, continue with the original source summary. `finalize` will record a warning in the output errors section instead of failing.
    - Translation must stay in the model, not inside any script.
    - Write a JSON object into `<TRANSLATED_JSON_PATH>`:
      - Legacy format (still supported): map URL to translated title string.
@@ -85,6 +111,32 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
 python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py finalize --incremental-json <INCREMENTAL_JSON_PATH> --translated-json <TRANSLATED_JSON_PATH> --state-dir <STATE_DIR> --out-dir <WORKDIR>
 ```
 
+Finalize recovery policy:
+
+- If `finalize` succeeds, continue normally.
+- If `finalize` fails, inspect stderr for a bracketed `FINALIZE_*` error code.
+- For `FINALIZE_STATE_CHANGED_SINCE_PREPARE`, rerun `prepare` once using the same `current_json_path` stored in `incremental.json.paths.current_json_path`, the same `STATE_DIR`, and the same `INCREMENTAL_JSON_PATH`.
+- After rerunning `prepare`, reuse the existing `translated.json` as a base, translate only newly missing `items_to_translate` fields, then rerun `finalize` once.
+- Do not rerun the pipeline as part of finalize recovery. If the same `current.json` is rejected during the new `prepare`, stop and report that the current artifact is no longer usable against the latest state.
+- Do not retry `FINALIZE_OUTPUT_EXISTS`, `FINALIZE_WRITE_FAILED`, bad artifact paths, bad JSON, bad metadata, bad state, or already-finalized runs.
+- Bloomberg summary translation issues are handled before `finalize` by repairing `translated.json`; if still unresolved, `finalize` uses the original summary and records a warning instead of returning a failure.
+
+Recoverable finalize codes:
+
+- `FINALIZE_STATE_CHANGED_SINCE_PREPARE`: daily state changed after `prepare`; rerun `prepare` from the same `current.json`.
+
+Non-recoverable finalize codes:
+
+- `FINALIZE_BAD_ARTIFACT_PATH`: artifact paths are outside the run directory, mixed across run directories, or inconsistent with stored metadata.
+- `FINALIZE_BAD_INCREMENTAL_JSON`: `incremental.json` is missing, invalid JSON, or not an object.
+- `FINALIZE_BAD_TRANSLATED_JSON`: `translated.json` is missing, invalid JSON, or not an object.
+- `FINALIZE_BAD_RUN_METADATA`: run identity, timezone, or timestamp metadata is missing or invalid.
+- `FINALIZE_BAD_INCREMENTAL_METADATA`: date, run timestamp, paths, or state snapshot metadata is invalid.
+- `FINALIZE_BAD_STATE`: the daily state file is invalid or cannot be parsed safely.
+- `FINALIZE_RUN_ALREADY_FINALIZED`: this run id or generated timestamp has already been finalized.
+- `FINALIZE_OUTPUT_EXISTS`: the target per-run `freshNews.md` already exists.
+- `FINALIZE_WRITE_FAILED`: an output Markdown or state file could not be written.
+
 10. Finalize writes exactly two user-facing Markdown files:
    - `YYYY-MM-DD_dailyFreshNews.md`: one rolling summary file per day.
    - `YYYY-MM-DD-HH-mm_freshNews.md`: one per-run fresh-news file.
@@ -94,7 +146,8 @@ python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incrementa
    - `prepare` and `finalize` now require run artifacts to live under `<STATE_DIR>/runs/<run-dir>/`.
    - `finalize` never overwrites an existing `YYYY-MM-DD-HH-mm_freshNews.md`.
    - If `prepare` sees a `current.json` older than the latest finalized run, it fails instead of returning a misleading `0 条新增`.
-   - If state changes after `prepare`, rerun `prepare`; do not force `finalize`.
+   - Recoverable `prepare` failures may trigger one clean retry from a new run directory; non-recoverable failures must remain hard stops.
+   - If state changes after `prepare`, rerun `prepare` from the same `current.json`; do not force `finalize` and do not automatically rerun pipeline.
 
 ## State Schema Notes
 
@@ -168,8 +221,8 @@ Example empty-group summary:
 
 Constraints:
 - Missing time must be `页面未显示`.
-- Bloomberg summaries, when present, must be rendered in Chinese. The translation map may use `summary` or `summary_zh`; `summary_zh` is preferred for clarity.
-- If a non-Chinese Bloomberg summary is present but its translated summary is missing or still non-Chinese, `finalize` must fail instead of silently writing English text.
+- Bloomberg summaries should be rendered in Chinese when translation is available. The translation map may use `summary` or `summary_zh`; `summary_zh` is preferred for clarity.
+- If a non-Chinese Bloomberg summary is present but its translated summary is missing or still non-Chinese after one repair attempt, `finalize` must write the original source summary and record a warning in errors instead of failing.
 - Preserve first-seen order: command order first, then source order.
 - Global dedupe key is absolute URL exact match.
 - Daily filtering removes yesterday's URLs.

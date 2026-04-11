@@ -46,6 +46,41 @@ SECTION_DISPLAY_NAMES = {
     "techcrunch": "TechCrunch",
     "arstechnica": "Ars Technica",
 }
+PREPARE_RECOVERABLE_ERROR_CODES = frozenset(
+    {
+        "PREPARE_STALE_CURRENT_JSON",
+        "PREPARE_RUN_ID_ALREADY_FINALIZED",
+        "PREPARE_GENERATED_AT_ALREADY_FINALIZED",
+        "PREPARE_CURRENT_JSON_UNREADABLE",
+    }
+)
+FINALIZE_RECOVERABLE_ERROR_CODES = frozenset(
+    {
+        "FINALIZE_STATE_CHANGED_SINCE_PREPARE",
+    }
+)
+
+
+class IncrementalNewsError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
+
+
+def incremental_error(code: str, message: str) -> IncrementalNewsError:
+    return IncrementalNewsError(code, message)
+
+
+def is_recoverable_prepare_error_code(code: str) -> bool:
+    return code in PREPARE_RECOVERABLE_ERROR_CODES
+
+
+def is_recoverable_finalize_error_code(code: str) -> bool:
+    return code in FINALIZE_RECOVERABLE_ERROR_CODES
 
 
 def format_timestamp(dt: datetime) -> str:
@@ -260,13 +295,20 @@ def get_runs_root(state_dir: Path) -> Path:
     return state_dir / RUNS_DIRNAME
 
 
-def validate_run_artifact_path(path: Path, state_dir: Path, *, label: str) -> Path:
+def validate_run_artifact_path(
+    path: Path,
+    state_dir: Path,
+    *,
+    label: str,
+    error_code: str | None = None,
+) -> Path:
     runs_root = get_runs_root(state_dir)
     run_dir = path.parent
     if run_dir.parent != runs_root:
-        raise ValueError(
-            f"{label} must be stored under {runs_root}/<run-dir>/..., got {path}"
-        )
+        message = f"{label} must be stored under {runs_root}/<run-dir>/..., got {path}"
+        if error_code:
+            raise incremental_error(error_code, message)
+        raise ValueError(message)
     return run_dir
 
 
@@ -541,12 +583,11 @@ def translated_summary_for(item: dict[str, str], translations: dict[str, dict[st
     )
 
 
-def validate_bloomberg_summary_translations(
+def bloomberg_summary_translation_warnings(
     items: list[dict[str, str]],
     translations: dict[str, dict[str, str]],
-) -> None:
-    missing: list[str] = []
-    non_chinese: list[str] = []
+) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
     for item in items:
         if item.get("section") != "bloomberg_main":
             continue
@@ -555,33 +596,44 @@ def validate_bloomberg_summary_translations(
             continue
         translated_summary = translated_summary_for(item, translations)
         if not translated_summary:
-            missing.append(item["url"])
+            warnings.append(
+                {
+                    "section": "bloomberg_main",
+                    "command_str": "",
+                    "error": "Bloomberg summary 未翻译，已使用原文摘要：{}".format(
+                        item["url"]
+                    ),
+                }
+            )
             continue
         if not contains_cjk(translated_summary):
-            non_chinese.append(item["url"])
+            warnings.append(
+                {
+                    "section": "bloomberg_main",
+                    "command_str": "",
+                    "error": "Bloomberg summary 翻译看起来仍非中文，已使用原文摘要：{}".format(
+                        item["url"]
+                    ),
+                }
+            )
+    return warnings
 
-    if missing:
-        raise ValueError(
-            "{} Bloomberg items require translated summary/summary_zh. First 5 missing: {}".format(
-                len(missing), missing[:5]
-            )
-        )
-    if non_chinese:
-        raise ValueError(
-            "{} Bloomberg translated summaries do not appear to be Chinese. First 5: {}".format(
-                len(non_chinese), non_chinese[:5]
-            )
-        )
+
+def final_summary_for(
+    item: dict[str, str],
+    translations: dict[str, dict[str, str]],
+) -> str:
+    original_summary = str(item.get("summary", "")).strip()
+    translated_summary = translated_summary_for(item, translations)
+    if translated_summary and contains_cjk(translated_summary):
+        return translated_summary
+    return original_summary
 
 
 def finalize_item(item: dict[str, str], translations: dict[str, dict[str, str]]) -> dict[str, str]:
     translated = translations.get(item["url"], {})
     title = str(translated.get("title", "")).strip() or item["raw_title"]
-    summary = (
-        str(translated.get("summary_zh", "")).strip()
-        or str(translated.get("summary", "")).strip()
-        or str(item.get("summary", "")).strip()
-    )
+    summary = final_summary_for(item, translations)
     quoted_text_raw = str(item.get("quoted_text_raw", item.get("quoted_text", ""))).strip()
     quoted_text_direct = str(translated.get("quoted_text", "")).strip()
     quoted_text_zh = str(translated.get("quoted_text_zh", "")).strip()
@@ -620,25 +672,46 @@ def prepare_incremental(args: argparse.Namespace) -> int:
     current_json_path = Path(args.current_json).expanduser().resolve()
     out_json_path = Path(args.out_json).expanduser().resolve()
     state_dir = Path(args.state_dir).expanduser().resolve()
-    current_run_dir = validate_run_artifact_path(current_json_path, state_dir, label="current-json")
-    incremental_run_dir = validate_run_artifact_path(out_json_path, state_dir, label="out-json")
+    current_run_dir = validate_run_artifact_path(
+        current_json_path,
+        state_dir,
+        label="current-json",
+        error_code="PREPARE_BAD_ARTIFACT_PATH",
+    )
+    incremental_run_dir = validate_run_artifact_path(
+        out_json_path,
+        state_dir,
+        label="out-json",
+        error_code="PREPARE_BAD_ARTIFACT_PATH",
+    )
     if current_run_dir != incremental_run_dir:
-        raise ValueError(
+        raise incremental_error(
+            "PREPARE_BAD_ARTIFACT_PATH",
             "current-json and out-json must live in the same run artifact directory"
         )
     if current_json_path == out_json_path:
-        raise ValueError("current-json and out-json must be different files")
+        raise incremental_error(
+            "PREPARE_BAD_ARTIFACT_PATH",
+            "current-json and out-json must be different files",
+        )
 
-    raw_payload = load_json_file(current_json_path)
+    try:
+        raw_payload = load_json_file(current_json_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise incremental_error("PREPARE_CURRENT_JSON_UNREADABLE", str(exc)) from exc
     if not isinstance(raw_payload, dict):
-        raise ValueError("current-json must contain an object")
+        raise incremental_error("PREPARE_BAD_CURRENT_JSON", "current-json must contain an object")
 
-    run_meta = extract_run_metadata(raw_payload, source_label="current-json")
+    try:
+        run_meta = extract_run_metadata(raw_payload, source_label="current-json")
+    except ValueError as exc:
+        raise incremental_error("PREPARE_BAD_RUN_METADATA", str(exc)) from exc
     current_json_path_text = str(raw_payload.get("current_json_path", "")).strip()
     if current_json_path_text:
         reported_path = Path(current_json_path_text).expanduser().resolve()
         if reported_path != current_json_path:
-            raise ValueError(
+            raise incremental_error(
+                "PREPARE_BAD_ARTIFACT_PATH",
                 "current-json payload path does not match the provided current-json argument"
             )
 
@@ -648,46 +721,56 @@ def prepare_incremental(args: argparse.Namespace) -> int:
     run_file_timestamp = run_dt.strftime("%Y-%m-%d-%H-%M")
     yesterday_text = (run_dt - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    current_section_order = merge_section_order(
-        normalize_section_order(raw_payload.get("section_order", [])),
-        section_order_from_items([
+    try:
+        current_section_order = merge_section_order(
+            normalize_section_order(raw_payload.get("section_order", [])),
+            section_order_from_items([
+                item
+                for item in (
+                    normalize_item(entry) for entry in raw_payload.get("deduped_items", [])
+                )
+                if item is not None
+            ]),
+        )
+        current_items = [
             item
             for item in (
                 normalize_item(entry) for entry in raw_payload.get("deduped_items", [])
             )
             if item is not None
-        ]),
-    )
-    current_items = [
-        item
-        for item in (
-            normalize_item(entry) for entry in raw_payload.get("deduped_items", [])
-        )
-        if item is not None
-    ]
-    current_errors = [
-        err
-        for err in (
-            normalize_error(entry) for entry in raw_payload.get("errors", [])
-        )
-        if err is not None
-    ]
+        ]
+        current_errors = [
+            err
+            for err in (
+                normalize_error(entry) for entry in raw_payload.get("errors", [])
+            )
+            if err is not None
+        ]
+    except TypeError as exc:
+        raise incremental_error("PREPARE_BAD_CURRENT_JSON", str(exc)) from exc
     for error in current_errors:
         error["generated_at"] = run_meta["generated_at_text"]
 
     today_state_path = state_path_for_date(state_dir, date_text)
     yesterday_state_path = state_path_for_date(state_dir, yesterday_text)
-    today_state = load_state(today_state_path, date_text, timezone_name)
-    yesterday_state = load_state(yesterday_state_path, yesterday_text, timezone_name)
-    latest_snapshot = latest_run_snapshot(today_state)
+    try:
+        today_state = load_state(today_state_path, date_text, timezone_name)
+        yesterday_state = load_state(yesterday_state_path, yesterday_text, timezone_name)
+        latest_snapshot = latest_run_snapshot(today_state)
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise incremental_error("PREPARE_BAD_STATE", str(exc)) from exc
     latest_generated_at_text = latest_snapshot["latest_finalized_generated_at"]
     if latest_generated_at_text:
-        latest_generated_at = parse_timestamp(
-            latest_generated_at_text,
-            field_name="state.latest_finalized_generated_at",
-        ).replace(tzinfo=run_meta["timezone"])
+        try:
+            latest_generated_at = parse_timestamp(
+                latest_generated_at_text,
+                field_name="state.latest_finalized_generated_at",
+            ).replace(tzinfo=run_meta["timezone"])
+        except ValueError as exc:
+            raise incremental_error("PREPARE_BAD_STATE", str(exc)) from exc
         if run_meta["generated_at"] <= latest_generated_at:
-            raise ValueError(
+            raise incremental_error(
+                "PREPARE_STALE_CURRENT_JSON",
                 "current-json is not newer than the latest finalized run: "
                 f"{run_meta['generated_at_text']} <= {latest_generated_at_text}"
             )
@@ -696,11 +779,13 @@ def prepare_incremental(args: argparse.Namespace) -> int:
         existing_run_id = str(entry.get("run_id", "")).strip()
         existing_generated_at = str(entry.get("generated_at", "")).strip()
         if existing_run_id and existing_run_id == run_meta["run_id"]:
-            raise ValueError(
+            raise incremental_error(
+                "PREPARE_RUN_ID_ALREADY_FINALIZED",
                 f"run_id already finalized for today: {run_meta['run_id']}"
             )
         if existing_generated_at == run_meta["generated_at_text"]:
-            raise ValueError(
+            raise incremental_error(
+                "PREPARE_GENERATED_AT_ALREADY_FINALIZED",
                 "generated_at already finalized for today: "
                 f"{run_meta['generated_at_text']}"
             )
@@ -766,7 +851,10 @@ def prepare_incremental(args: argparse.Namespace) -> int:
             "daily_error_count": len(daily_errors),
         },
     }
-    write_json_file(out_json_path, payload)
+    try:
+        write_json_file(out_json_path, payload)
+    except Exception as exc:
+        raise incremental_error("PREPARE_WRITE_FAILED", str(exc)) from exc
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -780,28 +868,44 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         incremental_json_path,
         state_dir,
         label="incremental-json",
+        error_code="FINALIZE_BAD_ARTIFACT_PATH",
     )
     translated_run_dir = validate_run_artifact_path(
         translated_json_path,
         state_dir,
         label="translated-json",
+        error_code="FINALIZE_BAD_ARTIFACT_PATH",
     )
     if incremental_run_dir != translated_run_dir:
-        raise ValueError(
+        raise incremental_error(
+            "FINALIZE_BAD_ARTIFACT_PATH",
             "incremental-json and translated-json must live in the same run artifact directory"
         )
 
-    raw_payload = load_json_file(incremental_json_path)
+    try:
+        raw_payload = load_json_file(incremental_json_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise incremental_error("FINALIZE_BAD_INCREMENTAL_JSON", str(exc)) from exc
     if not isinstance(raw_payload, dict):
-        raise ValueError("incremental-json must contain an object")
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_JSON",
+            "incremental-json must contain an object",
+        )
 
-    run_meta = extract_run_metadata(raw_payload, source_label="incremental-json")
-    translations = get_translation_map(translated_json_path)
+    try:
+        run_meta = extract_run_metadata(raw_payload, source_label="incremental-json")
+    except ValueError as exc:
+        raise incremental_error("FINALIZE_BAD_RUN_METADATA", str(exc)) from exc
+    try:
+        translations = get_translation_map(translated_json_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise incremental_error("FINALIZE_BAD_TRANSLATED_JSON", str(exc)) from exc
 
     expected_date_text = run_meta["generated_at"].strftime("%Y-%m-%d")
     date_text = str(raw_payload.get("date", expected_date_text)).strip() or expected_date_text
     if date_text != expected_date_text:
-        raise ValueError(
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_METADATA",
             f"incremental-json date does not match generated_at: {date_text} != {expected_date_text}"
         )
 
@@ -815,49 +919,73 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         )
     ).strip()
     if not run_file_timestamp:
-        raise ValueError("incremental-json is missing run_file_timestamp")
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_METADATA",
+            "incremental-json is missing run_file_timestamp",
+        )
     expected_run_file_timestamp = run_meta["generated_at"].strftime("%Y-%m-%d-%H-%M")
     if run_file_timestamp != expected_run_file_timestamp:
-        raise ValueError(
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_METADATA",
             "incremental-json run_file_timestamp does not match generated_at: "
             f"{run_file_timestamp} != {expected_run_file_timestamp}"
         )
 
     paths_payload = raw_payload.get("paths", {})
     if not isinstance(paths_payload, dict):
-        raise ValueError("incremental-json paths must contain an object")
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_METADATA",
+            "incremental-json paths must contain an object",
+        )
     run_artifact_dir_text = str(paths_payload.get("run_artifact_dir", "")).strip()
     current_json_path_text = str(paths_payload.get("current_json_path", "")).strip()
     expected_incremental_json_path_text = str(paths_payload.get("incremental_json_path", "")).strip()
     if not run_artifact_dir_text or not current_json_path_text or not expected_incremental_json_path_text:
-        raise ValueError(
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_METADATA",
             "incremental-json is missing required run artifact paths"
         )
     if Path(run_artifact_dir_text).expanduser().resolve() != incremental_run_dir:
-        raise ValueError("incremental-json run artifact directory does not match its file location")
+        raise incremental_error(
+            "FINALIZE_BAD_ARTIFACT_PATH",
+            "incremental-json run artifact directory does not match its file location",
+        )
     if Path(expected_incremental_json_path_text).expanduser().resolve() != incremental_json_path:
-        raise ValueError("incremental-json path does not match the stored prepare output path")
+        raise incremental_error(
+            "FINALIZE_BAD_ARTIFACT_PATH",
+            "incremental-json path does not match the stored prepare output path",
+        )
 
     state_snapshot = raw_payload.get("state_snapshot", {})
     if not isinstance(state_snapshot, dict):
-        raise ValueError("incremental-json state_snapshot must contain an object")
+        raise incremental_error(
+            "FINALIZE_BAD_INCREMENTAL_METADATA",
+            "incremental-json state_snapshot must contain an object",
+        )
 
     today_state_path = state_path_for_date(state_dir, date_text)
-    yesterday_text = (
-        datetime.strptime(date_text, "%Y-%m-%d") - timedelta(days=1)
-    ).strftime("%Y-%m-%d")
+    try:
+        yesterday_text = (
+            datetime.strptime(date_text, "%Y-%m-%d") - timedelta(days=1)
+        ).strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise incremental_error("FINALIZE_BAD_INCREMENTAL_METADATA", str(exc)) from exc
     yesterday_state_path = state_path_for_date(state_dir, yesterday_text)
 
-    today_state = load_state(today_state_path, date_text, timezone_name)
-    yesterday_state = load_state(yesterday_state_path, yesterday_text, timezone_name)
-    latest_snapshot_now = latest_run_snapshot(today_state)
+    try:
+        today_state = load_state(today_state_path, date_text, timezone_name)
+        yesterday_state = load_state(yesterday_state_path, yesterday_text, timezone_name)
+        latest_snapshot_now = latest_run_snapshot(today_state)
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise incremental_error("FINALIZE_BAD_STATE", str(exc)) from exc
     if (
         latest_snapshot_now["latest_finalized_generated_at"]
         != str(state_snapshot.get("latest_finalized_generated_at", "")).strip()
         or latest_snapshot_now["latest_finalized_run_id"]
         != str(state_snapshot.get("latest_finalized_run_id", "")).strip()
     ):
-        raise ValueError(
+        raise incremental_error(
+            "FINALIZE_STATE_CHANGED_SINCE_PREPARE",
             "State changed since prepare; rerun prepare with the latest daily state before finalize"
         )
 
@@ -865,10 +993,14 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         existing_run_id = str(entry.get("run_id", "")).strip()
         existing_generated_at = str(entry.get("generated_at", "")).strip()
         if existing_run_id and existing_run_id == run_id:
-            raise FileExistsError(f"Run already finalized for run_id: {run_id}")
+            raise incremental_error(
+                "FINALIZE_RUN_ALREADY_FINALIZED",
+                f"Run already finalized for run_id: {run_id}",
+            )
         if existing_generated_at == generated_at:
-            raise FileExistsError(
-                f"Run already finalized for generated_at: {generated_at}"
+            raise incremental_error(
+                "FINALIZE_RUN_ALREADY_FINALIZED",
+                f"Run already finalized for generated_at: {generated_at}",
             )
 
     merged_section_order = merge_section_order(
@@ -913,7 +1045,14 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         )
         if err is not None
     ]
-    validate_bloomberg_summary_translations(run_fresh_items_raw, translations)
+    bloomberg_warnings = bloomberg_summary_translation_warnings(
+        run_fresh_items_raw,
+        translations,
+    )
+    for warning in bloomberg_warnings:
+        warning["generated_at"] = generated_at
+    current_run_errors.extend(bloomberg_warnings)
+    daily_errors.extend(bloomberg_warnings)
 
     today_seen_urls = list(today_state["today_seen_urls"])
     today_seen_set = set(today_seen_urls)
@@ -943,12 +1082,16 @@ def finalize_incremental(args: argparse.Namespace) -> int:
     ]
     run_fresh_items_final = [finalize_item(item, translations) for item in run_fresh_items_raw]
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise incremental_error("FINALIZE_WRITE_FAILED", str(exc)) from exc
     run_fresh_path = out_dir / f"{run_file_timestamp}_freshNews.md"
     daily_fresh_path = out_dir / f"{date_text}_dailyFreshNews.md"
     if run_fresh_path.exists():
-        raise FileExistsError(
-            f"Refusing to overwrite existing run file: {run_fresh_path}"
+        raise incremental_error(
+            "FINALIZE_OUTPUT_EXISTS",
+            f"Refusing to overwrite existing run file: {run_fresh_path}",
         )
 
     run_fresh_markdown = build_markdown(
@@ -961,8 +1104,13 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         daily_fresh_items_final,
         daily_errors,
     )
-    write_text_new_file(run_fresh_path, run_fresh_markdown)
-    write_text_atomic(daily_fresh_path, daily_fresh_markdown)
+    try:
+        write_text_new_file(run_fresh_path, run_fresh_markdown)
+        write_text_atomic(daily_fresh_path, daily_fresh_markdown)
+    except FileExistsError as exc:
+        raise incremental_error("FINALIZE_OUTPUT_EXISTS", str(exc)) from exc
+    except Exception as exc:
+        raise incremental_error("FINALIZE_WRITE_FAILED", str(exc)) from exc
 
     runs = list(today_state["runs"])
     finalized_at = format_timestamp(datetime.now(run_meta["timezone"]))
@@ -995,7 +1143,10 @@ def finalize_incremental(args: argparse.Namespace) -> int:
         "daily_errors": daily_errors,
         "runs": runs,
     }
-    write_json_file(today_state_path, state_payload)
+    try:
+        write_json_file(today_state_path, state_payload)
+    except Exception as exc:
+        raise incremental_error("FINALIZE_WRITE_FAILED", str(exc)) from exc
 
     result = {
         "date": date_text,
