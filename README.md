@@ -18,19 +18,11 @@
 - `finalize` 现在会为典型失败输出 `FINALIZE_*` 错误码；如果 state 在 prepare 后发生变化，skill 执行层只用同一个 `current.json` 重新 `prepare` 一次，不自动重新跑 pipeline。
 - Bloomberg summary 缺翻译或翻译仍非中文时不再直接终止 finalize；执行层先尝试补翻译，仍不行则使用原文 summary，并在最终 Markdown 的 errors 区域记录 warning。
 
-## 目前这个 skill 改过的 OpenCLI 内置命令
+## 目前这个 skill 改过的 OpenCLI 命令
 
 以下只记录相对于原始 skill 配置有明确变更的内置命令。
 
-### 1. `bbc_news`
-
-- 旧命令：`opencli BbcPublic news --limit 10 --format json`
-- 现命令：`opencli bbc news --limit 10 --format json`
-- 原因：
-  - `BbcPublic` 不是当前可用的内置命令名
-  - 当前环境里可用的是 `bbc news`
-
-### 2. `bloomberg_main`
+### 1. `bloomberg_main`
 
 - 旧命令：`opencli bloomberg main --limit 15 --format json`
 - 现命令：`opencli BloombergUser main --limit 15 --format json`
@@ -58,7 +50,6 @@
 - `business`
 - `technology`
 - `bloomberg_main`
-- `bbc_news`
 - `techcrunch`
 - `arstechnica`
 
@@ -77,7 +68,7 @@
 
 目前 `commands.json` 已按信源类型配置重试：
 
-- 门户/新闻站点（Reuters 5个 section、`bloomberg_main`、`bbc_news`、`techcrunch`、`arstechnica`）：
+- 门户/新闻站点（Reuters 5个 section、`bloomberg_main`、`techcrunch`、`arstechnica`）：
   - `retry_once: true`
   - `treat_empty_as_failure: true`
   - `min_valid_items: 1`
@@ -89,7 +80,6 @@
 
 - 新闻站点空结果通常代表抓取异常，应该触发重试。
 - Twitter 空结果不一定是错误，先避免误判导致噪音。
-- BBC 不再走 `frontpage -> fallback` 链路，直接使用 `opencli bbc news` 作为主命令。
 
 ## 为了兼容这些命令，管道脚本还改了什么
 
@@ -144,7 +134,6 @@
 
 实际踩过的例子：
 
-- `BbcPublic` 不是当前应使用的命令名
 - `bloomberg-latest` 实际并不存在
 
 结论：
@@ -157,8 +146,6 @@
 实际遇到过：
 
 - Bloomberg：`title / summary / link / mediaLinks`
-- BBC（早期观察）：`title / description / url`
-- BBC（修复后）：补出了 `time`
 - Reuters/Twitter：字段形状又不同
 
 结论：

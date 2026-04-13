@@ -31,7 +31,6 @@ PORTAL_SECTIONS = {
     "business",
     "technology",
     "bloomberg_main",
-    "bbc_news",
     "techcrunch",
     "arstechnica",
 }
@@ -42,7 +41,6 @@ SECTION_DISPLAY_NAMES = {
     "business": "Reuters · Business",
     "technology": "Reuters · Technology",
     "bloomberg_main": "Bloomberg",
-    "bbc_news": "BBC",
     "techcrunch": "TechCrunch",
     "arstechnica": "Ars Technica",
 }
