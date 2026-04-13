@@ -191,7 +191,7 @@ Rules:
   - `min_valid_items`: minimum valid rows required for success when empty-check is enabled.
 - Current policy in this skill:
   - News portal sources use `retry_once`; most also use `treat_empty_as_failure: true` and `min_valid_items: 1`.
-  - `bbc_news` keeps `retry_once + fallback_command`.
+  - `bbc_news` uses `opencli bbc news` as primary command with `retry_once`; no dedicated fallback chain.
   - Twitter sources use `retry_once` only; do not force empty-as-failure by default.
 
 ## Output Contract

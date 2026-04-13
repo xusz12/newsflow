@@ -73,17 +73,12 @@
 - `卡比卡比`
 - `Aelia Capitolina`
 
-## 当前重试与保底策略
+## 当前重试策略
 
 目前 `commands.json` 已按信源类型配置重试：
 
-- 门户/新闻站点（Reuters 5个 section、`bloomberg_main`、`techcrunch`、`arstechnica`）：
+- 门户/新闻站点（Reuters 5个 section、`bloomberg_main`、`bbc_news`、`techcrunch`、`arstechnica`）：
   - `retry_once: true`
-  - `treat_empty_as_failure: true`
-  - `min_valid_items: 1`
-- `bbc_news`（保留专门保底链路）：
-  - `retry_once: true`
-  - `fallback_command: opencli bbc news ...`
   - `treat_empty_as_failure: true`
   - `min_valid_items: 1`
 - Twitter 账户源（8个 section）：
@@ -94,7 +89,7 @@
 
 - 新闻站点空结果通常代表抓取异常，应该触发重试。
 - Twitter 空结果不一定是错误，先避免误判导致噪音。
-- 复杂 fallback 继续只留在已验证稳定的 BBC 路径。
+- BBC 不再走 `frontpage -> fallback` 链路，直接使用 `opencli bbc news` 作为主命令。
 
 ## 为了兼容这些命令，管道脚本还改了什么
 
