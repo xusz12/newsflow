@@ -1,9 +1,9 @@
 ---
-name: opencli-sequential-news-zh
+name: newsflow
 description: Run configurable opencli news commands sequentially, skip failed commands, normalize JSON stories, and deduplicate globally by URL before producing daily fresh-news and per-run fresh-news markdown digests. Use when user wants repeatable multi-source news aggregation with easy command add/remove via commands.json and requires model-handled translation (no third-party translation API).
 ---
 
-# OpenCLI Sequential News ZH
+# Newsflow
 
 ## Execution Mode (Rules Compatibility)
 
@@ -20,7 +20,7 @@ description: Run configurable opencli news commands sequentially, skip failed co
    - Default: `references/commands.json` inside this skill.
    - Optional override: user-provided config path via `--config`.
    - Resolve skill root absolute path from this skill file location:
-     - `/Users/x/.codex/skills/opencli-sequential-news-zh`
+     - `/Users/x/.codex/skills/newsflow`
 3. Define run-scoped working paths. Do not reuse flat temp files like `.news_state/tmp_current.json`; each run must use its own artifact directory under `.news_state/runs/<run-dir>/`:
 
 ```bash
@@ -36,14 +36,14 @@ TRANSLATED_JSON_PATH=<RUN_DIR>/translated.json
 4. Run pipeline script sequentially:
 
 ```bash
-python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_news_pipeline.py --config <commands.json> --out-json <CURRENT_JSON_PATH>
+python3 /Users/x/.codex/skills/newsflow/scripts/run_news_pipeline.py --config <commands.json> --out-json <CURRENT_JSON_PATH>
 ```
 
 5. Wait for step 4 to exit successfully before continuing. Never run `prepare` while the pipeline command is still in flight.
 6. Prepare incremental payload:
 
 ```bash
-python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py prepare --current-json <CURRENT_JSON_PATH> --state-dir <STATE_DIR> --out-json <INCREMENTAL_JSON_PATH>
+python3 /Users/x/.codex/skills/newsflow/scripts/run_incremental_news.py prepare --current-json <CURRENT_JSON_PATH> --state-dir <STATE_DIR> --out-json <INCREMENTAL_JSON_PATH>
 ```
 
 Prepare recovery policy:
@@ -108,7 +108,7 @@ Non-recoverable prepare codes:
 9. Finalize outputs:
 
 ```bash
-python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_incremental_news.py finalize --incremental-json <INCREMENTAL_JSON_PATH> --translated-json <TRANSLATED_JSON_PATH> --state-dir <STATE_DIR> --out-dir <WORKDIR>
+python3 /Users/x/.codex/skills/newsflow/scripts/run_incremental_news.py finalize --incremental-json <INCREMENTAL_JSON_PATH> --translated-json <TRANSLATED_JSON_PATH> --state-dir <STATE_DIR> --out-dir <WORKDIR>
 ```
 
 Finalize recovery policy:

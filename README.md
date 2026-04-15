@@ -1,4 +1,4 @@
-# opencli-sequential-news-zh README
+# newsflow README
 
 这份 README 不是给模型执行用的，主要是给人看，方便后续维护这个 skill 时快速回答两个问题：
 
@@ -186,7 +186,7 @@ opencli <site> <command> --limit 2 --format json
 2. 再跑最小化管道，只带这个 source：
 
 ```bash
-python3 /Users/x/.codex/skills/opencli-sequential-news-zh/scripts/run_news_pipeline.py --config <mini-config> --out-json /tmp/test.json
+python3 /Users/x/.codex/skills/newsflow/scripts/run_news_pipeline.py --config <mini-config> --out-json /tmp/test.json
 ```
 
 如果单命令能跑，不代表一定能进管道。

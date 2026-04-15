@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 
-SKILL_ROOT = Path("/Users/x/.codex/skills/opencli-sequential-news-zh")
+SKILL_ROOT = Path("/Users/x/.codex/skills/newsflow")
 PIPELINE_SCRIPT = SKILL_ROOT / "scripts" / "run_news_pipeline.py"
 INCREMENTAL_SCRIPT = SKILL_ROOT / "scripts" / "run_incremental_news.py"
 TIMEZONE = "Asia/Shanghai"
