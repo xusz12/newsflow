@@ -164,8 +164,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "郭明錤",
@@ -177,8 +176,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "seekinganythingbutalpha",
@@ -190,8 +188,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "外汇交易员",
@@ -203,8 +200,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "Time Horizon",
@@ -216,8 +212,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "数字游民Jarod",
@@ -229,8 +224,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "卡比卡比",
@@ -242,8 +236,7 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   },
   {
     "section": "Aelia Capitolina",
@@ -255,7 +248,6 @@
       "10",
       "--full-text",
       "--json"
-    ],
-    "retry_once": true
+    ]
   }
 ]
