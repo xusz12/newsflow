@@ -215,35 +215,11 @@
     ]
   },
   {
-    "section": "数字游民Jarod",
-    "command": [
-      "twitter",
-      "user-posts",
-      "jarodise",
-      "-n",
-      "10",
-      "--full-text",
-      "--json"
-    ]
-  },
-  {
     "section": "卡比卡比",
     "command": [
       "twitter",
       "user-posts",
       "jakevin7",
-      "-n",
-      "10",
-      "--full-text",
-      "--json"
-    ]
-  },
-  {
-    "section": "Aelia Capitolina",
-    "command": [
-      "twitter",
-      "user-posts",
-      "Areskapitalon",
       "-n",
       "10",
       "--full-text",
