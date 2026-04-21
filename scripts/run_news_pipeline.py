@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -414,8 +415,11 @@ def run_pipeline(
     section_items: dict[str, list[dict[str, str]]] = {}
     errors: list[dict[str, Any]] = []
     recovered_attempts: list[dict[str, Any]] = []
+    timing_rows: list[dict[str, Any]] = []
+    pipeline_started_monotonic = time.monotonic()
 
     for entry in entries:
+        section_started_monotonic = time.monotonic()
         section = entry["section"]
         command = entry["command"]
         fallback_command = entry.get("fallback_command")
@@ -463,8 +467,35 @@ def run_pipeline(
                 success_attempt = fallback_attempt
                 used_fallback = True
 
+        section_duration_ms = int((time.monotonic() - section_started_monotonic) * 1000)
+        attempts_count = len(primary_attempts) + (1 if fallback_attempt is not None else 0)
+
         if success_attempt is not None:
             section_items[section].extend(success_attempt["items"])
+            if used_fallback:
+                status = "recovered_fallback"
+            elif len(primary_attempts) > 1:
+                status = "recovered_retry"
+            else:
+                status = "success"
+
+            print(
+                (
+                    f"[timing] section={section} status={status} "
+                    f"duration_ms={section_duration_ms} attempts={attempts_count} "
+                    f"items={len(success_attempt['items'])}"
+                ),
+                file=sys.stderr,
+            )
+            timing_rows.append(
+                {
+                    "section": section,
+                    "status": status,
+                    "duration_ms": section_duration_ms,
+                    "attempts": attempts_count,
+                    "items": len(success_attempt["items"]),
+                }
+            )
             if (len(primary_attempts) > 1) or used_fallback:
                 recovered_attempts.append(
                     {
@@ -506,6 +537,24 @@ def run_pipeline(
             final_command = last_primary["command"]
             final_command_str = last_primary["command_str"]
 
+        print(
+            (
+                f"[timing] section={section} status=failed "
+                f"duration_ms={section_duration_ms} attempts={attempts_count} "
+                f"items=0 error={json.dumps(final_error, ensure_ascii=False)}"
+            ),
+            file=sys.stderr,
+        )
+        timing_rows.append(
+            {
+                "section": section,
+                "status": "failed",
+                "duration_ms": section_duration_ms,
+                "attempts": attempts_count,
+                "items": 0,
+            }
+        )
+
         errors.append(
             {
                 "section": section,
@@ -513,6 +562,21 @@ def run_pipeline(
                 "command_str": final_command_str,
                 "error": final_error,
             }
+        )
+
+    total_pipeline_duration_ms = int((time.monotonic() - pipeline_started_monotonic) * 1000)
+    top_slowest = sorted(timing_rows, key=lambda row: row["duration_ms"], reverse=True)[:3]
+    print(
+        f"[timing-summary] total_ms={total_pipeline_duration_ms} sections={len(timing_rows)}",
+        file=sys.stderr,
+    )
+    for index, row in enumerate(top_slowest, start=1):
+        print(
+            (
+                f"[timing-summary] top{index} section={row['section']} status={row['status']} "
+                f"duration_ms={row['duration_ms']} attempts={row['attempts']} items={row['items']}"
+            ),
+            file=sys.stderr,
         )
 
     seen_urls: set[str] = set()

@@ -31,8 +31,17 @@ PORTAL_SECTIONS = {
     "business",
     "technology",
     "bloomberg_main",
+    "bloomberg_politics",
+    "bloomberg_economics",
+    "bloomberg_tech",
     "techcrunch",
     "arstechnica",
+}
+BLOOMBERG_SECTIONS = {
+    "bloomberg_main",
+    "bloomberg_politics",
+    "bloomberg_economics",
+    "bloomberg_tech",
 }
 SECTION_DISPLAY_NAMES = {
     "middle-east": "Reuters · Middle East",
@@ -41,6 +50,9 @@ SECTION_DISPLAY_NAMES = {
     "business": "Reuters · Business",
     "technology": "Reuters · Technology",
     "bloomberg_main": "Bloomberg",
+    "bloomberg_politics": "Bloomberg · Politics",
+    "bloomberg_economics": "Bloomberg · Economics",
+    "bloomberg_tech": "Bloomberg · Tech",
     "techcrunch": "TechCrunch",
     "arstechnica": "Ars Technica",
 }
@@ -500,7 +512,7 @@ def build_markdown(
                 lines.extend(render_blockquote(quoted_text))
             lines.append(f"- 发布时间：{item['time']}")
             summary = str(item.get("summary", "")).strip()
-            if item.get("section") == "bloomberg_main" and summary:
+            if item.get("section") in BLOOMBERG_SECTIONS and summary:
                 lines.append(f"- 摘要：{summary}")
             lines.append("")
         if index < len(non_empty_sections) - 1:
@@ -587,7 +599,7 @@ def bloomberg_summary_translation_warnings(
 ) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = []
     for item in items:
-        if item.get("section") != "bloomberg_main":
+        if item.get("section") not in BLOOMBERG_SECTIONS:
             continue
         summary = str(item.get("summary", "")).strip()
         if not summary or contains_cjk(summary):
@@ -596,7 +608,7 @@ def bloomberg_summary_translation_warnings(
         if not translated_summary:
             warnings.append(
                 {
-                    "section": "bloomberg_main",
+                    "section": item["section"],
                     "command_str": "",
                     "error": "Bloomberg summary 未翻译，已使用原文摘要：{}".format(
                         item["url"]
@@ -607,7 +619,7 @@ def bloomberg_summary_translation_warnings(
         if not contains_cjk(translated_summary):
             warnings.append(
                 {
-                    "section": "bloomberg_main",
+                    "section": item["section"],
                     "command_str": "",
                     "error": "Bloomberg summary 翻译看起来仍非中文，已使用原文摘要：{}".format(
                         item["url"]
